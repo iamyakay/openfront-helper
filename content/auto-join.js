@@ -339,7 +339,14 @@ function injectBridge() {
       loadNextScript();
     });
     script.addEventListener("error", () => {
-      window.__openfrontAutoJoinBridgeInjected = false;
+      const failed = bridgeScripts[scriptIndex];
+      console.error(
+        "OpenFront helper bridge: failed to load script (continuing chain):",
+        failed,
+      );
+      script.remove();
+      scriptIndex += 1;
+      loadNextScript();
     });
     root.appendChild(script);
   }
@@ -1597,7 +1604,9 @@ function handleBridgeMessage(event) {
 
   if (data.type === "CHEATS_AVAILABILITY") {
     updateCheatsAvailability(data.payload?.available);
+    return;
   }
+
 }
 
 async function handleStorageChange(changes, areaName) {

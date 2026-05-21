@@ -1,0 +1,41 @@
+export type Forecast = {
+  available: boolean;
+  sampleSize?: number;
+  etaMinSeconds: number | null;
+  etaMaxSeconds: number | null;
+  hitChanceNext10: number | null;
+  medianLobbiesToMatch: number | null;
+};
+
+export type NormalizedSettings = {
+  language: string;
+  enabled: boolean;
+  searchStartedAt: number | null;
+  joinNotification: boolean;
+  minLobbySize: number | null;
+  markBotNationsRed: boolean;
+  showGoldPerMinute: boolean;
+  showTeamGoldPerMinute: boolean;
+  showTopGoldPerMinute: boolean;
+  markHoveredAlliesGreen: boolean;
+  showAllianceRequestsPanel: boolean;
+  showTradeBalances: boolean;
+  showMyGpmHistory: boolean;
+  showNukePrediction: boolean;
+  showNukeSuggestions: boolean;
+  showBoatPrediction: boolean;
+  autoNuke: boolean;
+  send1PercentBoat: boolean;
+  send1PercentBoatContextMenu?: boolean;
+  showEconomyHeatmap: boolean;
+  economyHeatmapIntensity: number;
+  showExportPartnerHeatmap: boolean;
+  showFloatingHelpersPanel: boolean;
+  cheatsAvailable: boolean;
+  lobbyForecast: Forecast;
+  collapsedHelperCategories: Record<string, boolean>;
+  includeFilters: Record<string, boolean>;
+  excludeFilters: Record<string, boolean>;
+  mapFilters: Record<string, boolean>;
+  mapExcludeFilters: Record<string, boolean>;
+};

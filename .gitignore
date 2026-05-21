@@ -9,9 +9,10 @@ node_modules/
 *.crx
 *.xpi
 dist/
+dist-popup/
 build/
 
-# Local environment and OS files
+# Local environment and OS files (React Bits Pro: REACTBITS_LICENSE_KEY in .env)
 .env
 .env.*
 .DS_Store

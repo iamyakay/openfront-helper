@@ -52,6 +52,19 @@
       setTradeBalancesEnabled(data.payload?.enabled);
     }
 
+    if (data.type === "SHOW_MY_GPM_HISTORY") {
+      if (typeof setSelfGpmHistoryPanelPosition === "function") {
+        setSelfGpmHistoryPanelPosition(data.payload?.panelPosition);
+      }
+      if (typeof setSelfGpmHistoryEnabled === "function") {
+        setSelfGpmHistoryEnabled(data.payload?.enabled);
+      } else {
+        console.error(
+          "OpenFront helper: self-gpm-history bridge not loaded (check manifest web_accessible_resources)",
+        );
+      }
+    }
+
     if (data.type === "SHOW_NUKE_PREDICTION") {
       setNukePredictionEnabled(data.payload?.enabled);
     }
@@ -80,6 +93,7 @@
     if (data.type === "SHOW_EXPORT_PARTNER_HEATMAP") {
       setExportPartnerHeatmapEnabled(data.payload?.enabled);
     }
+
 
     if (data.type === "APPLY_SELECTIVE_TRADE_POLICY") {
       const requestedAt = Number(data.payload?.requestedAt);

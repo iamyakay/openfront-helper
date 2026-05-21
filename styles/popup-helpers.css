@@ -982,6 +982,36 @@
   background: rgba(45, 35, 14, 0.86);
 }
 
+.filter-group-helpers .helpers-bento-grid {
+  position: relative;
+  z-index: 1;
+}
+
+.filter-group-helpers .helpers-bento-info {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(134, 239, 172, 0.35);
+  background: rgba(6, 24, 22, 0.92);
+  color: #bbf7d0;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.filter-group-helpers .helpers-bento-info:hover {
+  border-color: rgba(134, 239, 172, 0.62);
+  background: rgba(12, 42, 36, 0.96);
+}
+
+.filter-group-helpers .helpers-bento-info:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 
 @keyframes helperBorderSpin {
   to {

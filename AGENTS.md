@@ -16,14 +16,15 @@ Main responsibilities:
 ## Important files and folders
 
 - `manifest.json` - extension manifest, permissions, content-script order, and web-accessible resources.
-- `popup.html` - popup UI shell and stylesheet/script includes.
+- `popup-ui/` - React + Vite source for the extension popup; build output goes to `dist-popup/`.
+- `dist-popup/` - generated popup bundle (run `npm run build:popup` before loading the unpacked extension).
 - `styles\` - popup CSS split by area:
   - `popup-base.css` - base tokens, popup shell, header, shared chrome.
   - `popup-layout.css` - layout, auto-join panel, map filters.
   - `popup-helpers.css` - helper cards and helper-related popup UI.
   - `popup-filters.css` - lobby filter controls.
   - `popup-mistral.css` - optional pixel-art theme; do not re-enable unless explicitly requested.
-- `popup\` - popup state, rendering, and event handling.
+- `popup-ui\src\` - React components and hooks for the popup UI.
 - `shared\settings.js` - shared defaults and settings normalization used by popup and content scripts.
 - `shared\i18n.js` and `locales\` - translation bundle handling and localized strings.
 - `content\core.js` - shared content-script state and bridge synchronization.
@@ -35,7 +36,7 @@ Main responsibilities:
 
 ## Development notes
 
-- This repository has no full build system configured in `package.json`.
+- The popup is built with Vite (`npm run build:popup`); keep `dist-popup/` up to date when testing the unpacked extension.
 - Prefer small, targeted changes. Avoid refactoring unrelated code.
 - Keep popup and content-script settings behavior in sync by using `shared\settings.js` rather than duplicating defaults.
 - Preserve the content-script load order in `manifest.json` unless the dependency order is intentionally changed.
@@ -48,6 +49,8 @@ Main responsibilities:
 Use existing Node syntax checks where possible:
 
 ```powershell
+npm run check:popup
+npm run build:popup
 node --check content\floating-helpers.js
 node --check content\core.js
 node --check content\auto-join.js
@@ -66,9 +69,9 @@ If changing packaging behavior, inspect `scripts\build-zip.js` and run the exist
 ## UI and design guidance
 
 - The current popup design is the default dark theme from the split popup stylesheets.
-- `styles\popup-mistral.css` is not linked from `popup.html`; keep it disabled unless the user explicitly asks for the Mistral/pixel-art theme.
+- `styles\popup-mistral.css` is not linked from the popup entry; keep it disabled unless the user explicitly asks for the Mistral/pixel-art theme.
 - The floating helpers panel has inline styles in `content\floating-helpers.js`; keep it visually aligned with the default dark/green helper design.
-- When changing popup layout, check both `popup.html` and the relevant stylesheet in `styles\`.
+- When changing popup layout, check both `popup-ui\src\App.tsx` (or related components) and the relevant stylesheet in `styles\`.
 - When changing floating helper entries, update creation, event handling, and update logic together so removed controls do not leave dead code.
 
 ## Browser extension constraints

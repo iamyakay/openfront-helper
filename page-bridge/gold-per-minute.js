@@ -797,33 +797,6 @@
     );
   }
 
-  function getHoveredPlayerInfoOverlay() {
-    const overlay = document.querySelector("player-info-overlay");
-    if (!overlay?.player) {
-      return null;
-    }
-
-    const visible = overlay._isInfoVisible ?? overlay.isInfoVisible;
-    if (visible === false) {
-      return null;
-    }
-
-    return overlay;
-  }
-
-  function getPlayerInfoPanelRect(overlay) {
-    const panel =
-      overlay.querySelector('[class*="bg-gray-800"]') ??
-      overlay.querySelector('[class*="backdrop-blur"]') ??
-      overlay;
-    const rect = panel.getBoundingClientRect?.();
-    if (rect && (rect.width > 0 || rect.height > 0)) {
-      return rect;
-    }
-
-    return null;
-  }
-
   function updateGoldPerMinuteBadge() {
     const badge = ensureGoldPerMinuteBadge();
     if (!goldPerMinuteEnabled) {

@@ -142,6 +142,7 @@ function syncTradeBalancesHelper() {
   );
 }
 
+
 function syncNukePredictionHelper() {
   window.postMessage(
     {
@@ -235,6 +236,7 @@ function syncExportPartnerHeatmapHelper() {
     "*",
   );
 }
+
 
 function syncSelectiveTradePolicyToggle() {
   window.postMessage(
