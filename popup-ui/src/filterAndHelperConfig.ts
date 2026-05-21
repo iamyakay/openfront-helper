@@ -93,7 +93,6 @@ export type EconomicHelperToggle = {
     | "showGoldPerMinute"
     | "showTeamGoldPerMinute"
     | "showTopGoldPerMinute"
-    | "showMyGpmHistory"
     | "showTradeBalances";
   titleKey: string;
   descKey: string;
@@ -120,12 +119,6 @@ export const ECONOMIC_HELPERS: EconomicHelperToggle[] = [
     name: "showTopGoldPerMinute",
     titleKey: "Top 10 gold per minute",
     descKey: "Lists the highest tracked player GPM.",
-  },
-  {
-    name: "showMyGpmHistory",
-    titleKey: "My GPM history",
-    descKey:
-      "Charts your own GPM over time in 10 second samples. Hover the graph for a value at any moment.",
   },
   {
     name: "showTradeBalances",

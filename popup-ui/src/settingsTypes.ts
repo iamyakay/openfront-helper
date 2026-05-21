@@ -20,7 +20,6 @@ export type NormalizedSettings = {
   markHoveredAlliesGreen: boolean;
   showAllianceRequestsPanel: boolean;
   showTradeBalances: boolean;
-  showMyGpmHistory: boolean;
   showNukePrediction: boolean;
   showNukeSuggestions: boolean;
   showBoatPrediction: boolean;

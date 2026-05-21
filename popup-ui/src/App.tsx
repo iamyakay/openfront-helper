@@ -820,14 +820,6 @@ export default function App() {
                                     🚂
                                   </span>
                                 ) : null}
-                                {h.name === "showMyGpmHistory" ? (
-                                  <span
-                                    className="helper-option-icon helper-option-icon-gold"
-                                    aria-hidden="true"
-                                  >
-                                    📈
-                                  </span>
-                                ) : null}
                               </strong>
                               <small>{t(h.descKey)}</small>
                             </span>
