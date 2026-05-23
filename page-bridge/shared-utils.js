@@ -75,7 +75,24 @@ function getPlayerTeamName(player) {
   }
 }
 
-function getTeamColor(team, game = null) {
+// Per-game cache for team color resolution. Object.entries(TEAM_COLORS).find
+// otherwise runs for every player row on every render frame.
+let _cachedTeamColorGame = null;
+const _cachedTeamColors = new Map();
+let _teamColorsLowerCaseIndex = null;
+
+function _getTeamColorsLowerCaseIndex() {
+  if (_teamColorsLowerCaseIndex !== null) {
+    return _teamColorsLowerCaseIndex;
+  }
+  _teamColorsLowerCaseIndex = new Map();
+  for (const [name, color] of Object.entries(TEAM_COLORS)) {
+    _teamColorsLowerCaseIndex.set(name.toLowerCase(), color);
+  }
+  return _teamColorsLowerCaseIndex;
+}
+
+function _computeTeamColor(team, game) {
   if (team != null && game?.config?.().theme?.().teamColor) {
     try {
       const color = game.config().theme().teamColor(String(team));
@@ -90,14 +107,27 @@ function getTeamColor(team, game = null) {
 
   const teamKey = String(team ?? "");
   const normalizedKey = teamKey.trim().toLowerCase();
-  const directMatch = Object.entries(TEAM_COLORS).find(
-    ([name]) => name.toLowerCase() === normalizedKey,
-  );
+  const directMatch = _getTeamColorsLowerCaseIndex().get(normalizedKey);
   if (directMatch) {
-    return directMatch[1];
+    return directMatch;
   }
 
   return TEAM_COLORS[teamKey] || "#4ade80";
+}
+
+function getTeamColor(team, game = null) {
+  if (game !== _cachedTeamColorGame) {
+    _cachedTeamColorGame = game;
+    _cachedTeamColors.clear();
+  }
+  const cacheKey = String(team ?? "");
+  const cached = _cachedTeamColors.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const color = _computeTeamColor(team, game);
+  _cachedTeamColors.set(cacheKey, color);
+  return color;
 }
 
 function getTeamColorBackground(team, game = null) {
@@ -190,4 +220,70 @@ function findPlayerByTradeName(players, name) {
       (player) => normalizeTradeName(getPlayerDisplayName(player)) === normalizedName,
     ) ?? players.find((player) => normalizeTradeName(player?.name?.()) === normalizedName) ?? null
   );
+}
+
+// Shared per-tick cache for game.playerViews(). Avoids spawning a new
+// Array.from(...) snapshot on every helper render across multiple features.
+let _cachedPlayerViewsGame = null;
+let _cachedPlayerViewsTick = -1;
+let _cachedPlayerViewsArray = [];
+
+function getCachedPlayerViews(game) {
+  if (!game) {
+    return [];
+  }
+
+  let currentTick = Number.NaN;
+  try {
+    currentTick = Number(game.ticks?.());
+  } catch (_error) {
+    currentTick = Number.NaN;
+  }
+
+  if (
+    game === _cachedPlayerViewsGame &&
+    Number.isFinite(currentTick) &&
+    currentTick === _cachedPlayerViewsTick &&
+    _cachedPlayerViewsArray.length > 0
+  ) {
+    return _cachedPlayerViewsArray;
+  }
+
+  _cachedPlayerViewsGame = game;
+  _cachedPlayerViewsTick = Number.isFinite(currentTick) ? currentTick : -1;
+  try {
+    _cachedPlayerViewsArray = Array.from(game.playerViews?.() || []);
+  } catch (_error) {
+    _cachedPlayerViewsArray = [];
+  }
+  return _cachedPlayerViewsArray;
+}
+
+// FNV-1a-ish 32-bit numeric hash. Used to replace JSON.stringify-based
+// render-signature comparison in trade-balances.
+function mixHashNumber(hash, value) {
+  let h = hash >>> 0;
+  let n = value | 0;
+  if (n < 0) {
+    n = (n + 0x100000000) >>> 0;
+  }
+  h = (h ^ (n & 0xff)) >>> 0;
+  h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  h = (h ^ ((n >>> 8) & 0xff)) >>> 0;
+  h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  h = (h ^ ((n >>> 16) & 0xff)) >>> 0;
+  h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  h = (h ^ ((n >>> 24) & 0xff)) >>> 0;
+  h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  return h;
+}
+
+function mixHashString(hash, value) {
+  const str = String(value ?? "");
+  let h = hash >>> 0;
+  for (let i = 0; i < str.length; i += 1) {
+    h = (h ^ str.charCodeAt(i)) >>> 0;
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h;
 }

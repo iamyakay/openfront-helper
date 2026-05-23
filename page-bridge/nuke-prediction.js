@@ -19,8 +19,8 @@
 
       #${NUKE_LANDING_CONTAINER_ID} .openfront-helper-nuke-zone {
         position: fixed;
-        left: var(--nuke-x);
-        top: var(--nuke-y);
+        left: 0;
+        top: 0;
         width: var(--nuke-diameter);
         height: var(--nuke-diameter);
         border: 2px dashed var(--nuke-color, rgba(248, 113, 113, 0.92));
@@ -29,7 +29,8 @@
         box-shadow:
           0 0 18px var(--nuke-glow, rgba(248, 113, 113, 0.36)),
           inset 0 0 24px var(--nuke-inner-glow, rgba(248, 113, 113, 0.18));
-        transform: translate(-50%, -50%);
+        transform: translate3d(var(--nuke-tx, 0px), var(--nuke-ty, 0px), 0) translate(-50%, -50%);
+        will-change: transform;
       }
 
       #${NUKE_LANDING_CONTAINER_ID} .openfront-helper-nuke-zone::before,
@@ -55,8 +56,8 @@
 
       #${NUKE_LANDING_CONTAINER_ID} .openfront-helper-nuke-label {
         position: fixed;
-        left: var(--nuke-x);
-        top: calc(var(--nuke-y) - var(--nuke-radius) - 10px);
+        left: 0;
+        top: 0;
         padding: 4px 8px;
         border: 1px solid var(--nuke-label-border, rgba(248, 113, 113, 0.52));
         border-radius: 8px;
@@ -65,7 +66,8 @@
         font: 900 11px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         letter-spacing: 0;
         text-shadow: 0 1px 4px rgba(0, 0, 0, 0.92);
-        transform: translate(-50%, -100%);
+        transform: translate3d(var(--nuke-tx, 0px), var(--nuke-label-ty, 0px), 0) translate(-50%, -100%);
+        will-change: transform;
         white-space: nowrap;
       }
     `;
@@ -150,9 +152,127 @@
     }
   }
 
+  // DOM-element cache + scan cache. The active in-flight nuke list rarely
+  // changes; the screen position changes every pan frame. Splitting these
+  // updates eliminates the per-frame querySelector storm.
+  const nukeLandingEntries = new Map();
+  let nukeScanCache = []; // [{ unitId, targetTile, worldRadius, relation, count }]
+  let lastNukeScanAt = 0;
+  const NUKE_SCAN_MS = 250;
+  // Pre-allocated reusable objects. Eliminates per-landing per-frame allocs.
+  const _nukeWorldQueryArg = { x: 0, y: 0 };
+  const _nukeRadiusReusePos = { x: 0, y: 0, worldX: 0, worldY: 0 };
+
+  function collectNukeScan(game) {
+    const groupedByTile = new Map();
+    for (const unit of game.units(...NUKE_UNIT_TYPES)) {
+      if (!unit?.isActive?.()) {
+        continue;
+      }
+      const relation = getNukePredictionRelation(game, unit);
+      if (!relation) {
+        continue;
+      }
+      const targetTile = unit.targetTile?.();
+      if (targetTile === undefined) {
+        continue;
+      }
+
+      const landingId = `tile-${targetTile}`;
+      const worldRadius = getNukeLandingRadius(game, unit);
+      const existing = groupedByTile.get(landingId);
+      if (existing) {
+        existing.count += 1;
+        if (worldRadius > existing.worldRadius) {
+          existing.worldRadius = worldRadius;
+        }
+        if (existing.relation !== "enemy") {
+          existing.relation = relation;
+        }
+      } else {
+        // World coords are fixed for an in-flight nuke; resolve once per scan
+        // and reuse across pan frames instead of calling game.x/y per frame.
+        groupedByTile.set(landingId, {
+          landingId,
+          targetTile,
+          worldX: game.x(targetTile),
+          worldY: game.y(targetTile),
+          worldRadius,
+          relation,
+          count: 1,
+        });
+      }
+    }
+    return Array.from(groupedByTile.values());
+  }
+
+  function pruneNukeEntries() {
+    const activeIds = new Set();
+    for (const landing of nukeScanCache) {
+      activeIds.add(landing.landingId);
+    }
+    for (const [landingId, entry] of nukeLandingEntries) {
+      if (!activeIds.has(landingId)) {
+        entry.zone.remove();
+        entry.label.remove();
+        nukeLandingEntries.delete(landingId);
+      }
+    }
+  }
+
+  function ensureNukeLandingEntry(container, landingId) {
+    let entry = nukeLandingEntries.get(landingId);
+    if (entry) {
+      return entry;
+    }
+    const zone = document.createElement("div");
+    zone.className = "openfront-helper-nuke-zone";
+    zone.dataset.nukeId = landingId;
+    container.appendChild(zone);
+    const label = document.createElement("div");
+    label.className = "openfront-helper-nuke-label";
+    label.dataset.nukeId = landingId;
+    container.appendChild(label);
+    entry = {
+      zone,
+      label,
+      hidden: false,
+      tx: NaN,
+      ty: NaN,
+      labelTy: NaN,
+      radius: NaN,
+      relation: "",
+      count: -1,
+    };
+    nukeLandingEntries.set(landingId, entry);
+    return entry;
+  }
+
+  function hideNukeEntry(entry) {
+    if (!entry.hidden) {
+      entry.zone.hidden = true;
+      entry.label.hidden = true;
+      entry.hidden = true;
+    }
+  }
+
+  function applyNukeColors(zone, label, colors) {
+    zone.style.setProperty("--nuke-color", colors.color);
+    zone.style.setProperty("--nuke-bg", colors.bg);
+    zone.style.setProperty("--nuke-glow", colors.glow);
+    zone.style.setProperty("--nuke-inner-glow", colors.innerGlow);
+    zone.style.setProperty("--nuke-cross-color", colors.crossColor);
+    zone.style.setProperty("--nuke-cross-glow", colors.crossGlow);
+    label.style.setProperty("--nuke-label-border", colors.labelBorder);
+    label.style.setProperty("--nuke-label-color", colors.labelColor);
+  }
+
   function syncNukePrediction() {
     if (!nukePredictionEnabled) {
       document.getElementById(NUKE_LANDING_CONTAINER_ID)?.remove();
+      nukeLandingEntries.clear();
+      nukeScanCache = [];
+      lastNukeScanAt = 0;
       nukeLandingAnimationFrame = null;
       return;
     }
@@ -160,32 +280,40 @@
     const container = ensureNukeLandingContainer();
     const context = getOpenFrontGameContext();
     if (!context?.game || !context?.transform) {
-      container.replaceChildren();
+      if (nukeLandingEntries.size > 0) {
+        for (const entry of nukeLandingEntries.values()) {
+          entry.zone.remove();
+          entry.label.remove();
+        }
+        nukeLandingEntries.clear();
+      }
+      nukeScanCache = [];
+      lastNukeScanAt = 0;
       nukeLandingAnimationFrame = requestAnimationFrame(syncNukePrediction);
       return;
     }
 
-    const landings = new Map();
-    for (const unit of context.game.units(...NUKE_UNIT_TYPES)) {
-      if (!unit?.isActive?.()) {
-        continue;
-      }
+    const now = performance.now();
+    if (now - lastNukeScanAt >= NUKE_SCAN_MS) {
+      nukeScanCache = collectNukeScan(context.game);
+      pruneNukeEntries();
+      lastNukeScanAt = now;
+    }
 
-      const relation = getNukePredictionRelation(context.game, unit);
-      if (!relation) {
-        continue;
-      }
+    const innerWidth = window.innerWidth;
+    const innerHeight = window.innerHeight;
 
-      const targetTile = unit.targetTile?.();
-      if (targetTile === undefined) {
-        continue;
-      }
+    for (let i = 0; i < nukeScanCache.length; i += 1) {
+      const landing = nukeScanCache[i];
+      // World coords were resolved during scan; only the screen mapping
+      // changes during pan/zoom. Reuse a single input object for the
+      // worldToScreenCoordinates call.
+      _nukeWorldQueryArg.x = landing.worldX;
+      _nukeWorldQueryArg.y = landing.worldY;
 
-      const worldX = context.game.x(targetTile);
-      const worldY = context.game.y(targetTile);
-      let screenPos = null;
+      let screenPos;
       try {
-        screenPos = context.transform.worldToScreenCoordinates({ x: worldX, y: worldY });
+        screenPos = context.transform.worldToScreenCoordinates(_nukeWorldQueryArg);
       } catch (_error) {
         screenPos = null;
       }
@@ -195,86 +323,73 @@
         !Number.isFinite(screenPos?.y) ||
         screenPos.x < -300 ||
         screenPos.y < -300 ||
-        screenPos.x > window.innerWidth + 300 ||
-        screenPos.y > window.innerHeight + 300
+        screenPos.x > innerWidth + 300 ||
+        screenPos.y > innerHeight + 300
       ) {
+        const existing = nukeLandingEntries.get(landing.landingId);
+        if (existing) {
+          hideNukeEntry(existing);
+        }
         continue;
       }
 
+      _nukeRadiusReusePos.x = screenPos.x;
+      _nukeRadiusReusePos.y = screenPos.y;
+      _nukeRadiusReusePos.worldX = landing.worldX;
+      _nukeRadiusReusePos.worldY = landing.worldY;
       const radius = Math.max(
         12,
         getNukeLandingScreenRadius(
           context.transform,
-          { ...screenPos, worldX, worldY },
-          getNukeLandingRadius(context.game, unit),
+          _nukeRadiusReusePos,
+          landing.worldRadius,
         ),
       );
-      const landingId = `tile-${targetTile}`;
-      const landing = landings.get(landingId);
-      if (landing) {
-        landing.count += 1;
-        landing.radius = Math.max(landing.radius, radius);
-        if (landing.relation !== "enemy") {
-          landing.relation = relation;
-        }
-      } else {
-        landings.set(landingId, {
-          count: 1,
-          radius,
-          relation,
-          screenPos,
-        });
+
+      const entry = ensureNukeLandingEntry(container, landing.landingId);
+      if (entry.hidden) {
+        entry.zone.hidden = false;
+        entry.label.hidden = false;
+        entry.hidden = false;
+      }
+
+      // Positioning is done via a single compositor-friendly transform
+      // (translate3d) rather than left/top, so panning does not invalidate
+      // paint for the glow/shadow layers of each landing zone.
+      const tx = screenPos.x;
+      const ty = screenPos.y;
+      const labelTy = ty - radius - 10;
+      if (entry.tx !== tx) {
+        entry.zone.style.setProperty("--nuke-tx", `${tx}px`);
+        entry.label.style.setProperty("--nuke-tx", `${tx}px`);
+        entry.tx = tx;
+      }
+      if (entry.ty !== ty) {
+        entry.zone.style.setProperty("--nuke-ty", `${ty}px`);
+        entry.ty = ty;
+      }
+      if (entry.labelTy !== labelTy) {
+        entry.label.style.setProperty("--nuke-label-ty", `${labelTy}px`);
+        entry.labelTy = labelTy;
+      }
+      if (entry.radius !== radius) {
+        entry.zone.style.setProperty("--nuke-diameter", `${radius * 2}px`);
+        entry.radius = radius;
+      }
+      if (entry.relation !== landing.relation) {
+        applyNukeColors(entry.zone, entry.label, getNukePredictionColors(landing.relation));
+        entry.relation = landing.relation;
+      }
+      if (entry.count !== landing.count) {
+        const labelPrefix = landing.relation === "ally" ? "Ally nuke" : "Enemy nuke";
+        entry.label.textContent =
+          landing.count > 1 ? `${labelPrefix} ${landing.count}x` : labelPrefix;
+        entry.count = landing.count;
       }
     }
 
-    const activeIds = new Set();
-    for (const [landingId, landing] of landings) {
-      activeIds.add(landingId);
-      let zone = container.querySelector(
-        `.openfront-helper-nuke-zone[data-nuke-id="${escapeCssIdentifier(landingId)}"]`,
-      );
-      if (!zone) {
-        zone = document.createElement("div");
-        zone.className = "openfront-helper-nuke-zone";
-        zone.dataset.nukeId = landingId;
-        container.appendChild(zone);
-      }
-
-      let label = container.querySelector(
-        `.openfront-helper-nuke-label[data-nuke-id="${escapeCssIdentifier(landingId)}"]`,
-      );
-      if (!label) {
-        label = document.createElement("div");
-        label.className = "openfront-helper-nuke-label";
-        label.dataset.nukeId = landingId;
-        container.appendChild(label);
-      }
-
-      const colors = getNukePredictionColors(landing.relation);
-      zone.style.setProperty("--nuke-x", `${landing.screenPos.x}px`);
-      zone.style.setProperty("--nuke-y", `${landing.screenPos.y}px`);
-      zone.style.setProperty("--nuke-radius", `${landing.radius}px`);
-      zone.style.setProperty("--nuke-diameter", `${landing.radius * 2}px`);
-      zone.style.setProperty("--nuke-color", colors.color);
-      zone.style.setProperty("--nuke-bg", colors.bg);
-      zone.style.setProperty("--nuke-glow", colors.glow);
-      zone.style.setProperty("--nuke-inner-glow", colors.innerGlow);
-      zone.style.setProperty("--nuke-cross-color", colors.crossColor);
-      zone.style.setProperty("--nuke-cross-glow", colors.crossGlow);
-      label.style.setProperty("--nuke-x", `${landing.screenPos.x}px`);
-      label.style.setProperty("--nuke-y", `${landing.screenPos.y}px`);
-      label.style.setProperty("--nuke-radius", `${landing.radius}px`);
-      label.style.setProperty("--nuke-label-border", colors.labelBorder);
-      label.style.setProperty("--nuke-label-color", colors.labelColor);
-      const labelPrefix = landing.relation === "ally" ? "Ally nuke" : "Enemy nuke";
-      label.textContent = landing.count > 1 ? `${labelPrefix} ${landing.count}x` : labelPrefix;
-    }
-
-    for (const marker of container.querySelectorAll("[data-nuke-id]")) {
-      if (!activeIds.has(marker.dataset.nukeId || "")) {
-        marker.remove();
-      }
-    }
+    // Entries whose landing fell out of the scan cache are removed by
+    // pruneNukeEntries on the next scan tick (no per-frame sweep here).
 
     nukeLandingAnimationFrame = requestAnimationFrame(syncNukePrediction);
   }

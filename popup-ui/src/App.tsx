@@ -24,6 +24,7 @@ import {
 
 const SOUND_KEY = "joinNotificationSoundData";
 const SOUND_NAME_KEY = "joinNotificationSoundName";
+const LAST_SEEN_VERSION_KEY = "lastSeenVersion";
 
 function hasSelectedOptions(
   shared: Window["OpenFrontHelperSettings"],
@@ -88,6 +89,9 @@ export default function App() {
     i18n.getMessage(i18n.DEFAULT_TRANSLATIONS, "defaultSound"),
   );
   const [soundCustom, setSoundCustom] = useState(false);
+  const [showUpdateBanner, setShowUpdateBanner] = useState(false);
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const whatsNewButtonRef = useRef<HTMLButtonElement>(null);
   const [, setTimerTick] = useState(0);
   const soundInputRef = useRef<HTMLInputElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
@@ -152,6 +156,42 @@ export default function App() {
   }, [i18n]);
 
   useEffect(() => {
+    const currentVersion = chrome.runtime.getManifest?.()?.version ?? null;
+    if (!currentVersion) {
+      return;
+    }
+    void chrome.storage.local
+      .get([LAST_SEEN_VERSION_KEY, shared.WHATS_NEW_NOTICE_KEY])
+      .then((stored) => {
+        const lastSeen = stored[LAST_SEEN_VERSION_KEY];
+        const updateNoticePending = Boolean(stored[shared.WHATS_NEW_NOTICE_KEY]);
+        if (updateNoticePending) {
+          setSettingsOpen(false);
+          setShowUpdateBanner(true);
+          setWhatsNewOpen(true);
+          void chrome.storage.local.set({
+            [LAST_SEEN_VERSION_KEY]: currentVersion,
+            [shared.WHATS_NEW_NOTICE_KEY]: false,
+          });
+          return;
+        }
+        if (!lastSeen) {
+          void chrome.storage.local.set({ [LAST_SEEN_VERSION_KEY]: currentVersion });
+          return;
+        }
+        if (lastSeen !== currentVersion) {
+          setSettingsOpen(false);
+          setShowUpdateBanner(true);
+          setWhatsNewOpen(true);
+          void chrome.storage.local.set({
+            [LAST_SEEN_VERSION_KEY]: currentVersion,
+            [shared.WHATS_NEW_NOTICE_KEY]: false,
+          });
+        }
+      });
+  }, [shared]);
+
+  useEffect(() => {
     const onStorage = (
       changes: Record<string, chrome.storage.StorageChange>,
       areaName: string,
@@ -212,6 +252,7 @@ export default function App() {
         setOpenFrontReloadTabId(null);
         setHelperInfo(null);
         setSettingsOpen(false);
+        setWhatsNewOpen(false);
       }
     };
     document.addEventListener("keydown", onKey);
@@ -330,6 +371,36 @@ export default function App() {
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
             </svg>
             <span className="settings-button-label">{t("settings")}</span>
+          </button>
+          <button
+            ref={whatsNewButtonRef}
+            className="settings-button hero-whats-new-button"
+            type="button"
+            aria-label="What's new"
+            aria-expanded={whatsNewOpen}
+            onClick={(e) => {
+              e.stopPropagation();
+              setWhatsNewOpen((o) => !o);
+            }}
+          >
+            <svg
+              className="settings-icon whats-new-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.937A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.582a.5.5 0 0 1 0 .963L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+              <path d="M20 3v4" />
+              <path d="M22 5h-4" />
+              <path d="M4 17v2" />
+              <path d="M5 18H3" />
+            </svg>
+            <span className="settings-button-label">What&apos;s new</span>
           </button>
         </div>
 
@@ -510,6 +581,66 @@ export default function App() {
           </div>
         </div>
 
+        {whatsNewOpen ? (
+          <div
+            className="popup-modal whats-new-popup"
+            aria-hidden="false"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) {
+                setWhatsNewOpen(false);
+              }
+            }}
+          >
+            <div
+              className="popup-modal-card whats-new-card"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="whatsNewTitle"
+            >
+              <div className="popup-modal-head">
+                <p id="whatsNewTitle" className="popup-modal-title">
+                  What&apos;s new {manifestVersion}
+                </p>
+                <button
+                  className="popup-modal-close"
+                  type="button"
+                  aria-label="Close"
+                  onClick={() => setWhatsNewOpen(false)}
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="popup-modal-section">
+                <p className="popup-modal-section-title">Huge performance update</p>
+                <p className="popup-modal-text">
+                  The game should now run smoothly even with all helpers enabled at the same time.
+                </p>
+                <ul className="popup-modal-list">
+                  <li>Mark bot nations red</li>
+                  <li>Nuke prediction</li>
+                  <li>Boat prediction</li>
+                  <li>Economic heatmap</li>
+                  <li>Export partner heatmap</li>
+                  <li>Gold per minute</li>
+                  <li>Top 10 gold per minute</li>
+                  <li>Trade balances</li>
+                </ul>
+              </div>
+
+              <div className="popup-modal-actions">
+                <button
+                  className="popup-modal-button popup-modal-button-primary"
+                  type="button"
+                  onClick={() => setWhatsNewOpen(false)}
+                >
+                  Got it
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {openFrontReloadTabId != null ? (
           <div
             className="popup-modal openfront-reload-popup"
@@ -555,30 +686,45 @@ export default function App() {
           </div>
         ) : null}
 
-        <div className="discord-callout" aria-hidden="false">
-          <a
-            className="discord-link github-link"
-            href="https://github.com/phil0010-gh/openfront-helper"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={t("openGitHubRepository")}
-          >
-            <svg className="discord-icon github-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path d="M12 2C6.48 2 2 6.58 2 12.22c0 4.52 2.87 8.35 6.84 9.71.5.09.68-.22.68-.49 0-.24-.01-1.04-.01-1.89-2.78.62-3.37-1.22-3.37-1.22-.46-1.19-1.11-1.51-1.11-1.51-.91-.64.07-.63.07-.63 1 .07 1.53 1.06 1.53 1.06.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.36-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05A9.32 9.32 0 0 1 12 6.93c.85 0 1.7.12 2.5.35 1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.8-4.57 5.05.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.81 0 .27.18.59.69.49A10.14 10.14 0 0 0 22 12.22C22 6.58 17.52 2 12 2Z" />
-            </svg>
-          </a>
-          <a
-            className="discord-link"
-            href="https://discord.gg/6WFy4NQ9jy"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={t("Join our Discord")}
-          >
-            <svg className="discord-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path d="M20.3 4.5A16.6 16.6 0 0 0 16.2 3l-.2.4a12.7 12.7 0 0 1 3.6 1.8 13.6 13.6 0 0 0-10.4 0 12.7 12.7 0 0 1 3.6-1.8L12.6 3a16.6 16.6 0 0 0-4.1 1.5C5.9 8.4 5.2 12.2 5.6 16a16.7 16.7 0 0 0 5.1 2.6l.6-1a10.7 10.7 0 0 1-1.6-.8l.4-.3a11.9 11.9 0 0 0 10.6 0l.4.3a10.7 10.7 0 0 1-1.6.8l.6 1a16.7 16.7 0 0 0 5.1-2.6c.5-4.4-.8-8.1-2.9-11.5ZM11 13.7c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Zm6.4 0c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Z" />
-            </svg>
-            <span>{t("Join our Discord")}</span>
-          </a>
+        <div className="discord-area">
+          <div className="discord-callout" aria-hidden="false">
+            <a
+              className="discord-link github-link"
+              href="https://github.com/phil0010-gh/openfront-helper"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={t("openGitHubRepository")}
+            >
+              <svg className="discord-icon github-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M12 2C6.48 2 2 6.58 2 12.22c0 4.52 2.87 8.35 6.84 9.71.5.09.68-.22.68-.49 0-.24-.01-1.04-.01-1.89-2.78.62-3.37-1.22-3.37-1.22-.46-1.19-1.11-1.51-1.11-1.51-.91-.64.07-.63.07-.63 1 .07 1.53 1.06 1.53 1.06.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.36-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05A9.32 9.32 0 0 1 12 6.93c.85 0 1.7.12 2.5.35 1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.8-4.57 5.05.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.81 0 .27.18.59.69.49A10.14 10.14 0 0 0 22 12.22C22 6.58 17.52 2 12 2Z" />
+              </svg>
+            </a>
+            <a
+              className="discord-link"
+              href="https://discord.gg/6WFy4NQ9jy"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={t("Join our Discord")}
+            >
+              <svg className="discord-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M20.3 4.5A16.6 16.6 0 0 0 16.2 3l-.2.4a12.7 12.7 0 0 1 3.6 1.8 13.6 13.6 0 0 0-10.4 0 12.7 12.7 0 0 1 3.6-1.8L12.6 3a16.6 16.6 0 0 0-4.1 1.5C5.9 8.4 5.2 12.2 5.6 16a16.7 16.7 0 0 0 5.1 2.6l.6-1a10.7 10.7 0 0 1-1.6-.8l.4-.3a11.9 11.9 0 0 0 10.6 0l.4.3a10.7 10.7 0 0 1-1.6.8l.6 1a16.7 16.7 0 0 0 5.1-2.6c.5-4.4-.8-8.1-2.9-11.5ZM11 13.7c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Zm6.4 0c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Z" />
+              </svg>
+              <span>{t("Join our Discord")}</span>
+            </a>
+          </div>
+          {showUpdateBanner && (
+            <div className="update-banner" role="status">
+              <span className="update-banner-text">Share feedback or request new features.</span>
+              <button
+                className="update-banner-close"
+                type="button"
+                aria-label="Dismiss"
+                onClick={() => setShowUpdateBanner(false)}
+              >
+                ×
+              </button>
+            </div>
+          )}
         </div>
       </header>
 

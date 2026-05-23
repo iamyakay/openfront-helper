@@ -16,6 +16,7 @@ declare global {
     OPENFRONT_MAPS?: readonly OpenFrontMap[];
     OpenFrontHelperSettings: {
       STORAGE_KEY: string;
+      WHATS_NEW_NOTICE_KEY: string;
       MAPS: OpenFrontMap[];
       MAP_IDS: string[];
       FILTER_KEYS: string[];

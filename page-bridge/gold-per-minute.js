@@ -38,6 +38,41 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
+  // Layout-dirty flag invalidates cached helper-stats geometry. Cleared lazily
+  // by syncHelperLayoutIfNeeded() so we only pay for getBoundingClientRect()
+  // and CSS-variable writes when something actually changed (viewport resize,
+  // container content change, badge visibility toggle).
+  let _helperStatsLayoutDirty = true;
+  let _helperStatsResizeObserver = null;
+  let _helperStatsLayoutListenersBound = false;
+
+  function markHelperStatsLayoutDirty() {
+    _helperStatsLayoutDirty = true;
+  }
+
+  function bindHelperStatsLayoutListeners(container) {
+    if (_helperStatsLayoutListenersBound) {
+      return;
+    }
+    _helperStatsLayoutListenersBound = true;
+    window.addEventListener("resize", markHelperStatsLayoutDirty, {
+      passive: true,
+    });
+    const visualViewport = window.visualViewport;
+    if (visualViewport) {
+      visualViewport.addEventListener("resize", markHelperStatsLayoutDirty, {
+        passive: true,
+      });
+      visualViewport.addEventListener("scroll", markHelperStatsLayoutDirty, {
+        passive: true,
+      });
+    }
+    if (typeof ResizeObserver !== "undefined") {
+      _helperStatsResizeObserver = new ResizeObserver(markHelperStatsLayoutDirty);
+      _helperStatsResizeObserver.observe(container);
+    }
+  }
+
   function ensureHelperStatsContainer() {
     ensureHelperStatsContainerStyles();
 
@@ -48,7 +83,17 @@
       container.setAttribute("aria-hidden", "true");
       (document.body || document.documentElement).appendChild(container);
     }
+    bindHelperStatsLayoutListeners(container);
     return container;
+  }
+
+  function syncHelperStatsLayoutIfDirty() {
+    if (!_helperStatsLayoutDirty) {
+      return;
+    }
+    _helperStatsLayoutDirty = false;
+    positionHelperStatsContainer();
+    positionTopGoldPerMinuteBadge();
   }
 
   function positionHelperStatsContainer() {
@@ -73,7 +118,11 @@
     const hasVisibleCard = Boolean(
       container.querySelector('[data-visible="true"]'),
     );
-    container.dataset.visible = String(hasVisibleCard);
+    const nextVisible = String(hasVisibleCard);
+    if (container.dataset.visible !== nextVisible) {
+      markHelperStatsLayoutDirty();
+    }
+    container.dataset.visible = nextVisible;
     container.setAttribute("aria-hidden", String(!hasVisibleCard));
   }
 
@@ -449,7 +498,7 @@
     const now = Date.now();
     lastGoldPerMinuteSampleAt = now;
     const activeIds = new Set();
-    const players = context.game.playerViews?.() || [];
+    const players = getCachedPlayerViews(context.game);
 
     let index = 0;
     for (const player of players) {
@@ -523,47 +572,12 @@
     return ((last.earnedTotal - first.earnedTotal) / elapsedMs) * 60000;
   }
 
-  function getPlayerTeamName(player) {
-    try {
-      const team = player?.team?.();
-      return team == null ? null : String(team);
-    } catch (_error) {
-      return null;
-    }
-  }
-
-  function getTeamColor(team, game = null) {
-    if (team != null && game?.config?.().theme?.().teamColor) {
-      try {
-        const color = game.config().theme().teamColor(String(team));
-        const hex = color?.toHex?.();
-        if (hex) {
-          return hex;
-        }
-      } catch (_error) {
-        // Fall back to the local palette when the game theme is unavailable.
-      }
-    }
-
-    const teamKey = String(team ?? "");
-    const normalizedKey = teamKey.trim().toLowerCase();
-    const directMatch = Object.entries(TEAM_COLORS).find(
-      ([name]) => name.toLowerCase() === normalizedKey,
-    );
-    if (directMatch) {
-      return directMatch[1];
-    }
-
-    return TEAM_COLORS[teamKey] || "#4ade80";
-  }
-
-  function getTeamColorBackground(team, game = null) {
-    const color = getTeamColor(team, game);
-    return `${color}2b`;
-  }
+  // getPlayerTeamName / getTeamColor / getTeamColorBackground are provided by
+  // shared-utils.js. Previously this file shadowed them with identical
+  // implementations; the shared versions are now cached per game.
 
   function getTeamGoldPerMinuteRows(game) {
-    const players = game?.playerViews?.() || [];
+    const players = getCachedPlayerViews(game);
     const teams = new Map();
 
     let index = 0;
@@ -599,7 +613,7 @@
   }
 
   function getTopGoldPerMinuteRows(game) {
-    const players = game?.playerViews?.() || [];
+    const players = getCachedPlayerViews(game);
     const rows = [];
 
     let index = 0;
@@ -632,35 +646,35 @@
   function updateTeamGoldPerMinuteBadge() {
     const badge = ensureTeamGoldPerMinuteBadge();
     if (!teamGoldPerMinuteEnabled) {
-      badge.dataset.visible = "false";
-      syncHelperStatsContainerVisibility();
-      teamGoldPerMinuteAnimationFrame = null;
+      if (badge.dataset.visible !== "false") {
+        badge.dataset.visible = "false";
+        syncHelperStatsContainerVisibility();
+      }
       teamGoldPerMinuteRenderSignature = "";
       return;
     }
-
-    const now = Date.now();
-    if (now - lastTeamGoldPerMinuteRenderAt < GOLD_PER_MINUTE_RENDER_MS) {
-      teamGoldPerMinuteAnimationFrame = requestAnimationFrame(
-        updateTeamGoldPerMinuteBadge,
-      );
-      return;
-    }
-    lastTeamGoldPerMinuteRenderAt = now;
 
     const context = getOpenFrontGameContext();
     if (!context?.game) {
-      badge.dataset.visible = "false";
+      if (badge.dataset.visible !== "false") {
+        badge.dataset.visible = "false";
+        syncHelperStatsContainerVisibility();
+      }
       teamGoldPerMinuteRenderSignature = "";
-      syncHelperStatsContainerVisibility();
-      teamGoldPerMinuteAnimationFrame = requestAnimationFrame(
-        updateTeamGoldPerMinuteBadge,
-      );
       return;
     }
 
     sampleGoldPerMinuteIfDue();
     const rows = getTeamGoldPerMinuteRows(context.game);
+    if (rows.length < 2) {
+      if (badge.dataset.visible !== "false") {
+        badge.dataset.visible = "false";
+        syncHelperStatsContainerVisibility();
+      }
+      teamGoldPerMinuteRenderSignature = "";
+      return;
+    }
+
     const rowsContainer = badge.querySelector(".openfront-helper-team-gpm-rows");
     if (rowsContainer) {
       const rowData = rows.map((entry) => ({
@@ -668,15 +682,6 @@
         color: getTeamColor(entry.team, context.game),
         value: entry.trackedPlayers > 0 ? formatGoldPerMinute(entry.total) : "tracking",
       }));
-      if (rows.length < 2) {
-        badge.dataset.visible = "false";
-        teamGoldPerMinuteRenderSignature = "";
-        syncHelperStatsContainerVisibility();
-        teamGoldPerMinuteAnimationFrame = requestAnimationFrame(
-          updateTeamGoldPerMinuteBadge,
-        );
-        return;
-      }
 
       const nextSignature = rowData
         .map((entry) => `${entry.team}|${entry.color}|${entry.value}`)
@@ -699,44 +704,36 @@
           }),
         );
         teamGoldPerMinuteRenderSignature = nextSignature;
+        markHelperStatsLayoutDirty();
       }
     }
 
-    positionHelperStatsContainer();
-    badge.dataset.visible = "true";
-    syncHelperStatsContainerVisibility();
-    teamGoldPerMinuteAnimationFrame = requestAnimationFrame(
-      updateTeamGoldPerMinuteBadge,
-    );
+    if (badge.dataset.visible !== "true") {
+      badge.dataset.visible = "true";
+      syncHelperStatsContainerVisibility();
+      markHelperStatsLayoutDirty();
+    }
+    syncHelperStatsLayoutIfDirty();
   }
 
   function updateTopGoldPerMinuteBadge() {
     const badge = ensureTopGoldPerMinuteBadge();
     if (!topGoldPerMinuteEnabled) {
-      badge.dataset.visible = "false";
-      syncHelperStatsContainerVisibility();
-      topGoldPerMinuteAnimationFrame = null;
+      if (badge.dataset.visible !== "false") {
+        badge.dataset.visible = "false";
+        markHelperStatsLayoutDirty();
+      }
       topGoldPerMinuteRenderSignature = "";
       return;
     }
-
-    const now = Date.now();
-    if (now - lastTopGoldPerMinuteRenderAt < GOLD_PER_MINUTE_RENDER_MS) {
-      topGoldPerMinuteAnimationFrame = requestAnimationFrame(
-        updateTopGoldPerMinuteBadge,
-      );
-      return;
-    }
-    lastTopGoldPerMinuteRenderAt = now;
 
     const context = getOpenFrontGameContext();
     if (!context?.game) {
-      badge.dataset.visible = "false";
+      if (badge.dataset.visible !== "false") {
+        badge.dataset.visible = "false";
+        markHelperStatsLayoutDirty();
+      }
       topGoldPerMinuteRenderSignature = "";
-      syncHelperStatsContainerVisibility();
-      topGoldPerMinuteAnimationFrame = requestAnimationFrame(
-        updateTopGoldPerMinuteBadge,
-      );
       return;
     }
 
@@ -761,6 +758,7 @@
         if (topGoldPerMinuteRenderSignature !== nextSignature) {
           rowsContainer.innerHTML = `<span class="openfront-helper-top-gpm-empty">Tracking player income</span>`;
           topGoldPerMinuteRenderSignature = nextSignature;
+          markHelperStatsLayoutDirty();
         }
       } else if (topGoldPerMinuteRenderSignature !== nextSignature) {
         rowsContainer.replaceChildren(
@@ -787,43 +785,35 @@
           }),
         );
         topGoldPerMinuteRenderSignature = nextSignature;
+        markHelperStatsLayoutDirty();
       }
     }
 
-    badge.dataset.visible = "true";
-    positionTopGoldPerMinuteBadge();
-    topGoldPerMinuteAnimationFrame = requestAnimationFrame(
-      updateTopGoldPerMinuteBadge,
-    );
+    if (badge.dataset.visible !== "true") {
+      badge.dataset.visible = "true";
+      markHelperStatsLayoutDirty();
+    }
+    syncHelperStatsLayoutIfDirty();
   }
 
   function updateGoldPerMinuteBadge() {
     const badge = ensureGoldPerMinuteBadge();
     if (!goldPerMinuteEnabled) {
-      badge.dataset.visible = "false";
-      syncHelperStatsContainerVisibility();
-      goldPerMinuteAnimationFrame = null;
+      if (badge.dataset.visible !== "false") {
+        badge.dataset.visible = "false";
+        syncHelperStatsContainerVisibility();
+      }
       goldPerMinuteRenderSignature = "";
       return;
     }
-
-    const now = Date.now();
-    if (now - lastGoldPerMinuteRenderAt < GOLD_PER_MINUTE_RENDER_MS) {
-      goldPerMinuteAnimationFrame = requestAnimationFrame(
-        updateGoldPerMinuteBadge,
-      );
-      return;
-    }
-    lastGoldPerMinuteRenderAt = now;
 
     const overlay = getHoveredPlayerInfoOverlay();
     if (!overlay) {
-      badge.dataset.visible = "false";
+      if (badge.dataset.visible !== "false") {
+        badge.dataset.visible = "false";
+        syncHelperStatsContainerVisibility();
+      }
       goldPerMinuteRenderSignature = "";
-      syncHelperStatsContainerVisibility();
-      goldPerMinuteAnimationFrame = requestAnimationFrame(
-        updateGoldPerMinuteBadge,
-      );
       return;
     }
 
@@ -836,36 +826,31 @@
     const teamColor = team ? getTeamColor(team, overlay.game) : "";
     const teamBackground = team ? getTeamColorBackground(team, overlay.game) : "";
     const nextSignature = `${teamColor}|${teamBackground}|${valueText}`;
-    if (goldPerMinuteRenderSignature === nextSignature) {
-      positionHelperStatsContainer();
+
+    if (goldPerMinuteRenderSignature !== nextSignature) {
+      goldPerMinuteRenderSignature = nextSignature;
+      if (team) {
+        badge.style.setProperty("--team-accent-color", teamColor);
+        badge.style.setProperty("--team-border-color", teamColor);
+        badge.style.setProperty("--team-bg-color", teamBackground);
+      } else {
+        badge.style.removeProperty("--team-accent-color");
+        badge.style.removeProperty("--team-border-color");
+        badge.style.removeProperty("--team-bg-color");
+      }
+      const value = badge.querySelector(".openfront-helper-gpm-value");
+      if (value) {
+        value.textContent = valueText;
+      }
+      markHelperStatsLayoutDirty();
+    }
+
+    if (badge.dataset.visible !== "true") {
       badge.dataset.visible = "true";
       syncHelperStatsContainerVisibility();
-      goldPerMinuteAnimationFrame = requestAnimationFrame(
-        updateGoldPerMinuteBadge,
-      );
-      return;
+      markHelperStatsLayoutDirty();
     }
-    goldPerMinuteRenderSignature = nextSignature;
-
-    if (team) {
-      badge.style.setProperty("--team-accent-color", teamColor);
-      badge.style.setProperty("--team-border-color", teamColor);
-      badge.style.setProperty("--team-bg-color", teamBackground);
-    } else {
-      badge.style.removeProperty("--team-accent-color");
-      badge.style.removeProperty("--team-border-color");
-      badge.style.removeProperty("--team-bg-color");
-    }
-    const value = badge.querySelector(".openfront-helper-gpm-value");
-    if (value) {
-      value.textContent = valueText;
-    }
-    positionHelperStatsContainer();
-    badge.dataset.visible = "true";
-    syncHelperStatsContainerVisibility();
-    goldPerMinuteAnimationFrame = requestAnimationFrame(
-      updateGoldPerMinuteBadge,
-    );
+    syncHelperStatsLayoutIfDirty();
   }
 
   function setGoldPerMinuteEnabled(enabled) {
@@ -874,13 +859,11 @@
       if (goldPerMinuteInterval !== null) {
         clearInterval(goldPerMinuteInterval);
       }
-      if (goldPerMinuteAnimationFrame !== null) {
-        cancelAnimationFrame(goldPerMinuteAnimationFrame);
-      }
       goldPerMinuteInterval = null;
       goldPerMinuteAnimationFrame = null;
       lastGoldPerMinuteRenderAt = 0;
       goldPerMinuteRenderSignature = "";
+      unregisterHelperTickListener(updateGoldPerMinuteBadge);
       if (!teamGoldPerMinuteEnabled && !topGoldPerMinuteEnabled && !economyHeatmapEnabled) {
         goldTrackers.clear();
         incomingGoldTransfers.clear();
@@ -901,21 +884,16 @@
         GOLD_PER_MINUTE_SAMPLE_MS,
       );
     }
-    if (goldPerMinuteAnimationFrame === null) {
-      lastGoldPerMinuteRenderAt = 0;
-      updateGoldPerMinuteBadge();
-    }
+    registerHelperTickListener(updateGoldPerMinuteBadge);
   }
 
   function setTeamGoldPerMinuteEnabled(enabled) {
     teamGoldPerMinuteEnabled = Boolean(enabled);
     if (!teamGoldPerMinuteEnabled) {
-      if (teamGoldPerMinuteAnimationFrame !== null) {
-        cancelAnimationFrame(teamGoldPerMinuteAnimationFrame);
-      }
       teamGoldPerMinuteAnimationFrame = null;
       lastTeamGoldPerMinuteRenderAt = 0;
       teamGoldPerMinuteRenderSignature = "";
+      unregisterHelperTickListener(updateTeamGoldPerMinuteBadge);
       const badge = document.getElementById(TEAM_GOLD_PER_MINUTE_BADGE_ID);
       if (badge) {
         badge.dataset.visible = "false";
@@ -930,21 +908,16 @@
     }
 
     sampleGoldPerMinute();
-    if (teamGoldPerMinuteAnimationFrame === null) {
-      lastTeamGoldPerMinuteRenderAt = 0;
-      updateTeamGoldPerMinuteBadge();
-    }
+    registerHelperTickListener(updateTeamGoldPerMinuteBadge);
   }
 
   function setTopGoldPerMinuteEnabled(enabled) {
     topGoldPerMinuteEnabled = Boolean(enabled);
     if (!topGoldPerMinuteEnabled) {
-      if (topGoldPerMinuteAnimationFrame !== null) {
-        cancelAnimationFrame(topGoldPerMinuteAnimationFrame);
-      }
       topGoldPerMinuteAnimationFrame = null;
       lastTopGoldPerMinuteRenderAt = 0;
       topGoldPerMinuteRenderSignature = "";
+      unregisterHelperTickListener(updateTopGoldPerMinuteBadge);
       const badge = document.getElementById(TOP_GOLD_PER_MINUTE_BADGE_ID);
       if (badge) {
         badge.dataset.visible = "false";
@@ -959,8 +932,5 @@
     }
 
     sampleGoldPerMinute();
-    if (topGoldPerMinuteAnimationFrame === null) {
-      lastTopGoldPerMinuteRenderAt = 0;
-      updateTopGoldPerMinuteBadge();
-    }
+    registerHelperTickListener(updateTopGoldPerMinuteBadge);
   }

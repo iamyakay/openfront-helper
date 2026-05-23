@@ -44,8 +44,11 @@ const NUKE_SUGGESTION_REFRESH_MS = 1800;
 const GOLD_PER_MINUTE_SAMPLE_MS = 1000;
 const GOLD_PER_MINUTE_RENDER_MS = 250;
 const GOLD_PER_MINUTE_WINDOW_MS = 60000;
-const ECONOMY_HEATMAP_DRAW_MS = 66;
-const EXPORT_PARTNER_HEATMAP_DRAW_MS = 100;
+// Heatmap layers must keep pace with the game canvas while panning, otherwise
+// the helper layer visibly lags behind. Capped at ~60 Hz (matches the typical
+// rAF cadence); per-frame work is throttled by the cached data path instead.
+const ECONOMY_HEATMAP_DRAW_MS = 16;
+const EXPORT_PARTNER_HEATMAP_DRAW_MS = 16;
 const EXPORT_PARTNER_HEATMAP_SOURCE_CACHE_MS = 500;
 const ECONOMY_HEATMAP_DATA_REFRESH_MS = 1000;
 const TRADE_BALANCE_RENDER_MS = 250;
@@ -189,13 +192,34 @@ function getHeatmapTypePriority(type) {
   return 1;
 }
 
+// Per-array tile index for O(1) merge on repeated insertions.
+// Previously this was a linear sources.find(...) per call, which is O(n^2)
+// across a full collection and was visible in CPU profiles in late game.
+const _economicSourceIndexes = new WeakMap();
+
+function _getEconomicSourceIndex(sources) {
+  let byTile = _economicSourceIndexes.get(sources);
+  if (byTile) {
+    return byTile;
+  }
+  byTile = new Map();
+  for (const source of sources) {
+    if (source?.tile != null) {
+      byTile.set(String(source.tile), source);
+    }
+  }
+  _economicSourceIndexes.set(sources, byTile);
+  return byTile;
+}
+
 function addEconomicSource(sources, tile, weight, type = "Industry") {
   if (tile == null || !Number.isFinite(weight) || weight <= 0) {
     return;
   }
 
+  const byTile = _getEconomicSourceIndex(sources);
   const key = String(tile);
-  const existing = sources.find((source) => String(source.tile) === key);
+  const existing = byTile.get(key);
   if (existing) {
     existing.weight += weight;
     if (getHeatmapTypePriority(type) > getHeatmapTypePriority(existing.type)) {
@@ -204,9 +228,54 @@ function addEconomicSource(sources, tile, weight, type = "Industry") {
     return;
   }
 
-  sources.push({
-    tile,
-    weight,
-    type,
-  });
+  const entry = { tile, weight, type };
+  byTile.set(key, entry);
+  sources.push(entry);
+}
+
+// ---------- Consolidated helper update scheduler ----------
+// Replaces 4 self-recursive requestAnimationFrame loops (gold-per-minute,
+// team-gpm, top-gpm, trade-balance). Each helper registers a callback that
+// runs at HELPER_TICK_INTERVAL_MS instead of waking the main thread every
+// 16 ms only to throttle itself back to 250 ms.
+const HELPER_TICK_INTERVAL_MS = 250;
+const _helperTickListeners = new Set();
+let _helperTickIntervalId = null;
+
+function _runHelperTick() {
+  for (const listener of _helperTickListeners) {
+    try {
+      listener();
+    } catch (error) {
+      console.error("OpenFront helper tick listener failed:", error);
+    }
+  }
+}
+
+function _ensureHelperTickRunning() {
+  if (_helperTickIntervalId !== null) {
+    return;
+  }
+  _helperTickIntervalId = window.setInterval(_runHelperTick, HELPER_TICK_INTERVAL_MS);
+}
+
+function registerHelperTickListener(fn) {
+  if (typeof fn !== "function") {
+    return;
+  }
+  _helperTickListeners.add(fn);
+  _ensureHelperTickRunning();
+  try {
+    fn();
+  } catch (error) {
+    console.error("OpenFront helper tick listener (initial) failed:", error);
+  }
+}
+
+function unregisterHelperTickListener(fn) {
+  _helperTickListeners.delete(fn);
+  if (_helperTickListeners.size === 0 && _helperTickIntervalId !== null) {
+    window.clearInterval(_helperTickIntervalId);
+    _helperTickIntervalId = null;
+  }
 }

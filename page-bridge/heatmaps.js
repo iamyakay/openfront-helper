@@ -1,6 +1,33 @@
 // Economic and export-partner heatmap rendering.
 
   const heatmapWebGlRenderers = new WeakMap();
+  // Reusable per-canvas Float32Array for vertex data. Avoids allocating
+  // points.length * 6 * 6 floats every panning frame.
+  const heatmapVertexBuffers = new WeakMap();
+  // Cached economy heatmap intensity settings. Recomputed only when the
+  // intensity setting changes, not per point per frame.
+  const _economyHeatmapIntensityVariants = [
+    { alpha: 0.7, radius: 0.88 },
+    { alpha: 1, radius: 1 },
+    { alpha: 1.35, radius: 1.18 },
+  ];
+
+  function _getEconomyHeatmapIntensitySettingsCached() {
+    return _economyHeatmapIntensityVariants[
+      normalizeEconomyHeatmapIntensity(economyHeatmapIntensity)
+    ];
+  }
+
+  function _ensureHeatmapVertexBuffer(canvas, floatsNeeded) {
+    let buffer = heatmapVertexBuffers.get(canvas);
+    if (!buffer || buffer.length < floatsNeeded) {
+      // Allocate with growth headroom so subsequent frames reuse the buffer.
+      const capacity = Math.max(floatsNeeded, buffer ? buffer.length * 2 : 256);
+      buffer = new Float32Array(capacity);
+      heatmapVertexBuffers.set(canvas, buffer);
+    }
+    return buffer;
+  }
 
   function ensureEconomyHeatmapStyles() {
     if (document.getElementById(ECONOMY_HEATMAP_STYLE_ID)) {
@@ -68,8 +95,14 @@
       canvas.width = width;
       canvas.height = height;
     }
-    canvas.style.width = `${window.innerWidth}px`;
-    canvas.style.height = `${window.innerHeight}px`;
+    const cssWidth = `${window.innerWidth}px`;
+    const cssHeight = `${window.innerHeight}px`;
+    if (canvas.style.width !== cssWidth) {
+      canvas.style.width = cssWidth;
+    }
+    if (canvas.style.height !== cssHeight) {
+      canvas.style.height = cssHeight;
+    }
 
     return { canvas, pixelRatio };
   }
@@ -140,8 +173,14 @@
       canvas.width = width;
       canvas.height = height;
     }
-    canvas.style.width = `${window.innerWidth}px`;
-    canvas.style.height = `${window.innerHeight}px`;
+    const cssWidth = `${window.innerWidth}px`;
+    const cssHeight = `${window.innerHeight}px`;
+    if (canvas.style.width !== cssWidth) {
+      canvas.style.width = cssWidth;
+    }
+    if (canvas.style.height !== cssHeight) {
+      canvas.style.height = cssHeight;
+    }
 
     return { canvas, pixelRatio };
   }
@@ -199,27 +238,9 @@
     return 1;
   }
 
-  function addEconomicSource(sources, tile, weight, type = "Industry") {
-    if (tile == null || !Number.isFinite(weight) || weight <= 0) {
-      return;
-    }
-
-    const key = String(tile);
-    const existing = sources.find((source) => String(source.tile) === key);
-    if (existing) {
-      existing.weight += weight;
-      if (getHeatmapTypePriority(type) > getHeatmapTypePriority(existing.type)) {
-        existing.type = type;
-      }
-      return;
-    }
-
-    sources.push({
-      tile,
-      weight,
-      type,
-    });
-  }
+  // addEconomicSource is provided globally by runtime.js with an O(1) tile
+  // dedup index. Previously this file shadowed it with a linear sources.find
+  // implementation (O(n^2) across late-game collections).
 
   function getRevenueUnitKey(unit) {
     const unitId = toFiniteNumber(unit?.id?.(), NaN);
@@ -425,11 +446,7 @@
   }
 
   function getEconomyHeatmapIntensitySettings() {
-    return [
-      { alpha: 0.7, radius: 0.88 },
-      { alpha: 1, radius: 1 },
-      { alpha: 1.35, radius: 1.18 },
-    ][normalizeEconomyHeatmapIntensity(economyHeatmapIntensity)];
+    return _getEconomyHeatmapIntensitySettingsCached();
   }
 
   function createHeatmapWebGlShader(gl, type, source) {
@@ -637,20 +654,24 @@
     ];
     const floatsPerVertex = 6;
     const verticesPerPoint = 6;
-    const data = new Float32Array(points.length * verticesPerPoint * floatsPerVertex);
+    const floatsNeeded = points.length * verticesPerPoint * floatsPerVertex;
+    const data = _ensureHeatmapVertexBuffer(canvas, floatsNeeded);
     for (let index = 0; index < points.length; index += 1) {
       const point = points[index];
       const shape = getShape(point, maxWeight, pixelRatio);
       const centerX = point.x * pixelRatio;
       const centerY = point.y * pixelRatio;
+      const radius = shape.radius;
+      const intensity = shape.intensity;
+      const baseOffset = index * verticesPerPoint * floatsPerVertex;
       for (let vertex = 0; vertex < verticesPerPoint; vertex += 1) {
-        const offset = (index * verticesPerPoint + vertex) * floatsPerVertex;
+        const offset = baseOffset + vertex * floatsPerVertex;
         data[offset] = centerX;
         data[offset + 1] = centerY;
         data[offset + 2] = quadOffsets[vertex * 2];
         data[offset + 3] = quadOffsets[vertex * 2 + 1];
-        data[offset + 4] = shape.radius;
-        data[offset + 5] = shape.intensity;
+        data[offset + 4] = radius;
+        data[offset + 5] = intensity;
       }
     }
 
@@ -659,7 +680,14 @@
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(program);
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+    // Upload only the used slice: data may have growth headroom from the
+    // reusable buffer pool. subarray returns a Float32Array view over the
+    // same underlying ArrayBuffer (no copy).
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      data.length === floatsNeeded ? data : data.subarray(0, floatsNeeded),
+      gl.DYNAMIC_DRAW,
+    );
 
     const stride = floatsPerVertex * Float32Array.BYTES_PER_ELEMENT;
     gl.enableVertexAttribArray(renderer.centerLocation);
@@ -680,9 +708,14 @@
     return true;
   }
 
+  // Reused shape result. getEconomyHeatmapPointShape is called once per point
+  // per frame; returning a fresh object each call caused thousands of object
+  // allocations per second during panning.
+  const _economyShapeResult = { intensity: 0, radius: 0 };
+
   function getEconomyHeatmapPointShape(point, maxWeight, pixelRatio) {
     const baseIntensity = Math.max(0.28, Math.min(1, point.weight / maxWeight));
-    const intensitySettings = getEconomyHeatmapIntensitySettings();
+    const intensitySettings = _getEconomyHeatmapIntensitySettingsCached();
     const intensity = Math.max(
       0.14,
       Math.min(1, baseIntensity * intensitySettings.alpha),
@@ -697,10 +730,10 @@
       point.zoomScale < 1
         ? Math.min(1.35, Math.max(0.68, point.zoomScale * 1.8))
         : point.zoomScale;
-    return {
-      intensity,
-      radius: (18 + radiusIntensity * 52) * typeScale * zoomRadiusScale * pixelRatio,
-    };
+    _economyShapeResult.intensity = intensity;
+    _economyShapeResult.radius =
+      (18 + radiusIntensity * 52) * typeScale * zoomRadiusScale * pixelRatio;
+    return _economyShapeResult;
   }
 
   function drawEconomyHeatmapPoint(ctx, point, maxWeight, pixelRatio) {
@@ -766,7 +799,13 @@
     }
 
     canvas.parentElement?.removeAttribute("data-status");
-    const maxWeight = Math.max(1, ...points.map((point) => point.weight));
+    let maxWeight = 1;
+    for (let i = 0; i < points.length; i += 1) {
+      const w = points[i].weight;
+      if (w > maxWeight) {
+        maxWeight = w;
+      }
+    }
     if (renderHeatmapPointsWebGl(canvas, points, maxWeight, pixelRatio, 0, getEconomyHeatmapPointShape)) {
       economyHeatmapAnimationFrame = requestAnimationFrame(drawEconomyHeatmap);
       return;
@@ -787,6 +826,8 @@
     economyHeatmapAnimationFrame = requestAnimationFrame(drawEconomyHeatmap);
   }
 
+  const _exportPartnerShapeResult = { intensity: 0, radius: 0 };
+
   function getExportPartnerHeatmapPointShape(point, maxWeight, pixelRatio) {
     const intensity = Math.max(0.3, Math.min(1, point.weight / maxWeight));
     const typeScale =
@@ -801,10 +842,10 @@
       point.zoomScale < 1
         ? Math.min(1.15, Math.max(0.58, point.zoomScale * 1.55))
         : point.zoomScale;
-    return {
-      intensity,
-      radius: (20 + intensity * 64) * typeScale * zoomRadiusScale * pixelRatio,
-    };
+    _exportPartnerShapeResult.intensity = intensity;
+    _exportPartnerShapeResult.radius =
+      (20 + intensity * 64) * typeScale * zoomRadiusScale * pixelRatio;
+    return _exportPartnerShapeResult;
   }
 
   function drawExportPartnerHeatmapPoint(ctx, point, maxWeight, pixelRatio) {
@@ -857,7 +898,13 @@
     }
 
     canvas.parentElement?.removeAttribute("data-status");
-    const maxWeight = Math.max(1, ...points.map((point) => point.weight));
+    let maxWeight = 1;
+    for (let i = 0; i < points.length; i += 1) {
+      const w = points[i].weight;
+      if (w > maxWeight) {
+        maxWeight = w;
+      }
+    }
     if (renderHeatmapPointsWebGl(canvas, points, maxWeight, pixelRatio, 1, getExportPartnerHeatmapPointShape)) {
       exportPartnerHeatmapAnimationFrame = requestAnimationFrame(drawExportPartnerHeatmap);
       return;

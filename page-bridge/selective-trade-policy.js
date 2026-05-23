@@ -478,7 +478,20 @@
     clearSelectiveTradePolicy(gameOverride);
   }
 
-  function getOpenFrontGameContext() {
+  // Context discovery is the hottest per-frame path: every active helper
+  // (nuke-prediction, boat-prediction, bot-markers, heatmaps) calls this on
+  // every render frame. The old implementation ran 11 document.querySelector
+  // calls plus 66 inner iterations every time, even when lastOpenFrontGameContext
+  // was perfectly valid. That was ~2640 querySelectors/s with four helpers
+  // active at 60 Hz, which is a major contributor to in-game frame drops.
+  //
+  // Strategy: short-circuit on the cached context. Game/transform references
+  // are stable across the lifetime of a single match. Force a periodic full
+  // re-discovery so we still notice when a game ends and a new one starts.
+  const _OPEN_FRONT_CONTEXT_REFRESH_MS = 1000;
+  let _lastOpenFrontContextDiscoveryAt = 0;
+
+  function _discoverOpenFrontGameContext() {
     const playerInfoOverlay = document.querySelector("player-info-overlay");
     const playerPanel = document.querySelector("player-panel");
     const emojiTable = document.querySelector("emoji-table");
@@ -527,6 +540,32 @@
       return discoveredContext;
     }
 
+    return null;
+  }
+
+  function getOpenFrontGameContext() {
+    // Fast path: re-use the cached context as long as it still looks usable
+    // and the periodic refresh interval has not elapsed.
+    const now = performance.now();
+    if (
+      now - _lastOpenFrontContextDiscoveryAt < _OPEN_FRONT_CONTEXT_REFRESH_MS &&
+      isUsableOpenFrontGameContext(
+        lastOpenFrontGameContext?.game,
+        lastOpenFrontGameContext?.transform,
+      )
+    ) {
+      return lastOpenFrontGameContext;
+    }
+
+    _lastOpenFrontContextDiscoveryAt = now;
+    const discovered = _discoverOpenFrontGameContext();
+    if (discovered) {
+      return discovered;
+    }
+
+    // Last resort: even if discovery failed this round, keep the previously
+    // cached context if its functions still exist. Prevents a single failed
+    // DOM scan from breaking helpers mid-game.
     if (
       isUsableOpenFrontGameContext(
         lastOpenFrontGameContext?.game,

@@ -30,15 +30,16 @@
 
       #${BOAT_LANDING_CONTAINER_ID} .openfront-helper-boat-marker {
         position: fixed;
-        left: var(--boat-x);
-        top: var(--boat-y);
+        left: 0;
+        top: 0;
         width: 20px;
         height: 20px;
         border: 2px solid var(--boat-color);
         border-radius: 50%;
         background: var(--boat-bg);
         box-shadow: 0 0 4px var(--boat-color);
-        transform: translate(-50%, -50%);
+        transform: translate3d(var(--boat-tx, 0px), var(--boat-ty, 0px), 0) translate(-50%, -50%);
+        will-change: transform;
       }
 
       #${BOAT_LANDING_CONTAINER_ID} .openfront-helper-boat-marker::before,
@@ -63,8 +64,8 @@
 
       #${BOAT_LANDING_CONTAINER_ID} .openfront-helper-boat-label {
         position: fixed;
-        left: var(--boat-x);
-        top: calc(var(--boat-y) - 16px);
+        left: 0;
+        top: 0;
         padding: 3px 7px;
         border: 1px solid var(--boat-color);
         border-radius: 8px;
@@ -72,7 +73,8 @@
         color: var(--boat-color);
         font: 900 11px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         text-shadow: 0 1px 4px rgba(0, 0, 0, 0.92);
-        transform: translate(-50%, -100%);
+        transform: translate3d(var(--boat-tx, 0px), var(--boat-label-ty, 0px), 0) translate(-50%, -100%);
+        will-change: transform;
         white-space: nowrap;
       }
 
@@ -83,15 +85,16 @@
 
       #${BOAT_LANDING_CONTAINER_ID} .openfront-helper-boat-highlight {
         position: fixed;
-        left: var(--boat-x);
-        top: var(--boat-y);
+        left: 0;
+        top: 0;
         width: 28px;
         height: 28px;
         border: 2.5px solid var(--boat-color);
         border-radius: 50%;
         background: var(--boat-bg);
         box-shadow: 0 0 6px var(--boat-color);
-        transform: translate(-50%, -50%);
+        transform: translate3d(var(--boat-tx, 0px), var(--boat-ty, 0px), 0) translate(-50%, -50%);
+        will-change: transform;
         animation: openfront-helper-boat-highlight-pulse 1.1s ease-in-out infinite;
       }
 
@@ -264,6 +267,22 @@
     return `${compactName.slice(0, 17)}...`;
   }
 
+  // Reused screen-point objects. toScreenPoint is called once per visible
+  // transport per frame; a fresh allocation each call piled up GC pressure
+  // during panning. Three slots cover landing-pos + boat-pos + one-off uses
+  // within a single frame; callers must not retain references across yields.
+  const _screenPointPool = [
+    { x: 0, y: 0, worldX: 0, worldY: 0 },
+    { x: 0, y: 0, worldX: 0, worldY: 0 },
+    { x: 0, y: 0, worldX: 0, worldY: 0 },
+  ];
+  let _screenPointPoolIndex = 0;
+  const _toScreenPointQueryArg = { x: 0, y: 0 };
+
+  function resetScreenPointPool() {
+    _screenPointPoolIndex = 0;
+  }
+
   function toScreenPoint(game, transform, tile) {
     if (tile == null) {
       return null;
@@ -271,11 +290,34 @@
     try {
       const worldX = game.x(tile);
       const worldY = game.y(tile);
-      const point = transform.worldToScreenCoordinates({ x: worldX, y: worldY });
+      return toScreenPointFromWorld(transform, worldX, worldY);
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  // Fast-path variant that skips the game.x/game.y proxy calls when callers
+  // have pre-resolved world coords (boat scan, nuke scan).
+  function toScreenPointFromWorld(transform, worldX, worldY) {
+    if (!Number.isFinite(worldX) || !Number.isFinite(worldY)) {
+      return null;
+    }
+    try {
+      _toScreenPointQueryArg.x = worldX;
+      _toScreenPointQueryArg.y = worldY;
+      const point = transform.worldToScreenCoordinates(_toScreenPointQueryArg);
       if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) {
         return null;
       }
-      return { x: point.x, y: point.y, worldX, worldY };
+      const slot = _screenPointPool[
+        _screenPointPoolIndex % _screenPointPool.length
+      ];
+      _screenPointPoolIndex += 1;
+      slot.x = point.x;
+      slot.y = point.y;
+      slot.worldX = worldX;
+      slot.worldY = worldY;
+      return slot;
     } catch (_error) {
       return null;
     }
@@ -331,6 +373,9 @@
         motionPlanUnitId: Number.isFinite(motionPlanUnitId) ? motionPlanUnitId : null,
         unit,
         targetTile,
+        // Target world coords are fixed per transport; cache once per scan.
+        targetWorldX: game.x(targetTile),
+        targetWorldY: game.y(targetTile),
         color,
         bg,
         labelText,
@@ -382,15 +427,18 @@
   }
 
   function updateBoatPredictionEntryPosition(entry, screenPos) {
+    // Positions are baked into translate3d via CSS variables, not left/top.
+    // Avoids per-frame paint invalidation of the marker (with its box-shadow)
+    // when the camera pans.
     const x = `${screenPos.x}px`;
     const y = `${screenPos.y}px`;
 
     if (entry.markerX !== x) {
-      entry.marker.style.setProperty("--boat-x", x);
+      entry.marker.style.setProperty("--boat-tx", x);
       entry.markerX = x;
     }
     if (entry.markerY !== y) {
-      entry.marker.style.setProperty("--boat-y", y);
+      entry.marker.style.setProperty("--boat-ty", y);
       entry.markerY = y;
     }
   }
@@ -464,28 +512,50 @@
     const now = Date.now();
     if (!lastBoatPredictionScanAt || now - lastBoatPredictionScanAt >= BOAT_PREDICTION_SCAN_MS) {
       boatPredictionTransports = collectBoatPredictionTransports(context.game);
-      cleanupBoatPredictionDomCache(new Set(boatPredictionTransports.map((transport) => transport.domUnitId)));
+      const scanIds = new Set();
+      for (const transport of boatPredictionTransports) {
+        scanIds.add(transport.domUnitId);
+      }
+      cleanupBoatPredictionDomCache(scanIds);
       lastBoatPredictionScanAt = now;
     }
 
-    const visibleTransportIds = new Set();
-    const transportHoverData = [];
+    resetScreenPointPool();
 
-    for (const transport of boatPredictionTransports) {
-      const screenPos = toScreenPoint(context.game, context.transform, transport.targetTile);
+    const visibleTransportIds = new Set();
+    // Track the hovered transport inline (no transportHoverData allocation).
+    // Stable landing coordinates are captured here so the pool can be reused.
+    let hoveredTransport = null;
+    let hoveredLandingX = 0;
+    let hoveredLandingY = 0;
+
+    for (let i = 0; i < boatPredictionTransports.length; i += 1) {
+      const transport = boatPredictionTransports[i];
+      // Use pre-resolved world coords from the scan; avoids two proxy calls
+      // (game.x, game.y) per transport per pan frame.
+      const screenPos = toScreenPointFromWorld(
+        context.transform,
+        transport.targetWorldX,
+        transport.targetWorldY,
+      );
       if (!isNearViewport(screenPos, 200)) {
         continue;
       }
-
-      transportHoverData.push({
-        ...transport,
-        landingScreenPos: screenPos,
-      });
 
       visibleTransportIds.add(transport.domUnitId);
       const entry = getBoatPredictionDomEntry(container, transport);
       setBoatPredictionEntryVisible(entry, true);
       updateBoatPredictionEntryPosition(entry, screenPos);
+
+      if (!hoveredTransport) {
+        const dx = screenPos.x - boatLandingMouseX;
+        const dy = screenPos.y - boatLandingMouseY;
+        if (dx * dx + dy * dy <= BOAT_LANDING_HOVER_RADIUS_SQUARED) {
+          hoveredTransport = transport;
+          hoveredLandingX = screenPos.x;
+          hoveredLandingY = screenPos.y;
+        }
+      }
     }
 
     for (const [domUnitId, entry] of boatPredictionDomCache) {
@@ -494,45 +564,46 @@
       }
     }
 
-    // Hover: highlight the boat and show its route when hovering a landing marker.
-    const routeSvg = ensureBoatHoverLineSvg(container);
-    let hoveredTransport = null;
-    for (const data of transportHoverData) {
-      const dx = data.landingScreenPos.x - boatLandingMouseX;
-      const dy = data.landingScreenPos.y - boatLandingMouseY;
-      if (dx * dx + dy * dy <= BOAT_LANDING_HOVER_RADIUS_SQUARED) {
-        hoveredTransport = data;
-        break;
-      }
-    }
-
     if (hoveredTransport) {
-      const { motionPlanUnitId, unit, landingScreenPos, color, bg, labelText } = hoveredTransport;
-      const boatScreenPos = toScreenPoint(
+      const routeSvg = ensureBoatHoverLineSvg(container);
+      const { motionPlanUnitId, unit, color, bg, labelText } = hoveredTransport;
+      const boatScreenPosPooled = toScreenPoint(
         context.game,
         context.transform,
         asFiniteTileRef(unit?.tile?.()),
       );
+      // Capture stable copies of pool coords before getBoatRouteScreenPoints
+      // can recycle pool slots via its internal toScreenPoint calls.
+      const hasBoatScreenPos = boatScreenPosPooled != null;
+      const boatX = hasBoatScreenPos ? boatScreenPosPooled.x : 0;
+      const boatY = hasBoatScreenPos ? boatScreenPosPooled.y : 0;
+      const landingScreenPosLiteral = {
+        x: hoveredLandingX,
+        y: hoveredLandingY,
+      };
+      const boatScreenPosLiteral = hasBoatScreenPos
+        ? { x: boatX, y: boatY }
+        : null;
       const routePoints = getBoatRouteScreenPoints(
         context.game,
         context.transform,
         unit,
         motionPlanUnitId,
-        boatScreenPos,
-        landingScreenPos,
+        boatScreenPosLiteral,
+        landingScreenPosLiteral,
       );
 
       const hoverElements = getBoatPredictionHoverElements(container, routeSvg);
       hoverElements.label.hidden = false;
-      hoverElements.label.style.setProperty("--boat-x", `${landingScreenPos.x}px`);
-      hoverElements.label.style.setProperty("--boat-y", `${landingScreenPos.y}px`);
+      hoverElements.label.style.setProperty("--boat-tx", `${hoveredLandingX}px`);
+      hoverElements.label.style.setProperty("--boat-label-ty", `${hoveredLandingY - 16}px`);
       hoverElements.label.style.setProperty("--boat-color", color);
       hoverElements.label.textContent = labelText;
 
-      if (boatScreenPos) {
+      if (hasBoatScreenPos) {
         hoverElements.highlight.hidden = false;
-        hoverElements.highlight.style.setProperty("--boat-x", `${boatScreenPos.x}px`);
-        hoverElements.highlight.style.setProperty("--boat-y", `${boatScreenPos.y}px`);
+        hoverElements.highlight.style.setProperty("--boat-tx", `${boatX}px`);
+        hoverElements.highlight.style.setProperty("--boat-ty", `${boatY}px`);
         hoverElements.highlight.style.setProperty("--boat-color", color);
         hoverElements.highlight.style.setProperty("--boat-bg", bg);
       } else {
@@ -541,7 +612,12 @@
 
       if (routePoints.length >= 2) {
         hoverElements.routeLine.hidden = false;
-        hoverElements.routeLine.setAttribute("points", routePoints.map((p) => `${p.x},${p.y}`).join(" "));
+        let pointsAttr = "";
+        for (let i = 0; i < routePoints.length; i += 1) {
+          const p = routePoints[i];
+          pointsAttr += i === 0 ? `${p.x},${p.y}` : ` ${p.x},${p.y}`;
+        }
+        hoverElements.routeLine.setAttribute("points", pointsAttr);
         hoverElements.routeLine.style.stroke = color;
       } else {
         hoverElements.routeLine.hidden = true;

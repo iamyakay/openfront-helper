@@ -670,7 +670,7 @@
       return;
     }
 
-    const players = Array.from(game.playerViews?.() || []);
+    const players = getCachedPlayerViews(game);
     const boatRoutes = collectCompletedBoatTradeRoutes(game, updates);
     for (const updateGroup of Object.values(updates)) {
       if (!Array.isArray(updateGroup)) {
@@ -921,24 +921,27 @@
       .slice(0, 5);
   }
 
+  // Numeric (FNV-1a) hash of the trade-balance render inputs. Replaces a
+  // JSON.stringify-based signature that allocated a fresh string + entry array
+  // on every render tick. breakEvenBucket is intentionally excluded so that
+  // ticking-second changes do not invalidate the full row signature; the
+  // break-even text node is updated separately on every tick.
   function getTradeBalanceRenderSignature(player, totals, spend, entries) {
-    const playerId = getPlayerSmallId(player);
-    const breakEvenBucket = Math.floor(Date.now() / 1000);
-    return JSON.stringify({
-      playerId,
-      imports: Math.round(totals.imports || 0),
-      exports: Math.round(totals.exports || 0),
-      firstExportAt: totals.firstExportAt,
-      spend: Math.round(spend || 0),
-      breakEvenBucket,
-      entries: entries.map((entry) => [
-        entry.partnerId,
-        entry.partnerName,
-        Math.round(entry.total || 0),
-        Math.round(entry.imports || 0),
-        Math.round(entry.exports || 0),
-      ]),
-    });
+    let h = 0x811c9dc5;
+    h = mixHashNumber(h, getPlayerSmallId(player));
+    h = mixHashNumber(h, Math.round(totals.imports || 0));
+    h = mixHashNumber(h, Math.round(totals.exports || 0));
+    h = mixHashNumber(h, Number(totals.firstExportAt) || 0);
+    h = mixHashNumber(h, Math.round(spend || 0));
+    h = mixHashNumber(h, entries.length);
+    for (const entry of entries) {
+      h = mixHashNumber(h, Number(entry.partnerId) || 0);
+      h = mixHashString(h, entry.partnerName);
+      h = mixHashNumber(h, Math.round(entry.total || 0));
+      h = mixHashNumber(h, Math.round(entry.imports || 0));
+      h = mixHashNumber(h, Math.round(entry.exports || 0));
+    }
+    return h >>> 0;
   }
 
   function findTradePartnerPlayer(players, entry) {
@@ -973,7 +976,7 @@
       return sources;
     }
 
-    const players = Array.from(game?.playerViews?.() || []);
+    const players = getCachedPlayerViews(game);
     const alivePartnerIds = new Set(
       players
         .filter((entry) => entry?.isAlive?.())
@@ -1010,9 +1013,10 @@
   function updateTradeBalanceBadge() {
     const badge = ensureTradeBalanceBadge();
     if (!tradeBalancesEnabled) {
-      badge.dataset.visible = "false";
-      syncHelperStatsContainerVisibility();
-      tradeBalanceAnimationFrame = null;
+      if (badge.dataset.visible !== "false") {
+        badge.dataset.visible = "false";
+        syncHelperStatsContainerVisibility();
+      }
       return;
     }
 
@@ -1023,19 +1027,13 @@
 
     const overlay = getHoveredPlayerInfoOverlay();
     if (!overlay?.game) {
-      badge.dataset.visible = "false";
+      if (badge.dataset.visible !== "false") {
+        badge.dataset.visible = "false";
+        syncHelperStatsContainerVisibility();
+      }
       tradeBalanceRenderSignature = "";
-      syncHelperStatsContainerVisibility();
-      tradeBalanceAnimationFrame = requestAnimationFrame(updateTradeBalanceBadge);
       return;
     }
-
-    const now = Date.now();
-    if (now - lastTradeBalanceRenderAt < TRADE_BALANCE_RENDER_MS) {
-      tradeBalanceAnimationFrame = requestAnimationFrame(updateTradeBalanceBadge);
-      return;
-    }
-    lastTradeBalanceRenderAt = now;
 
     const totals = getTradeBalanceTotals(overlay.player);
     const factoryPortSpendTotal = getFactoryPortSpendTotal(overlay.player);
@@ -1046,90 +1044,94 @@
       factoryPortSpendTotal,
       entries,
     );
-    if (nextRenderSignature === tradeBalanceRenderSignature) {
-      positionHelperStatsContainer();
-      badge.dataset.visible = "true";
-      syncHelperStatsContainerVisibility();
-      tradeBalanceAnimationFrame = requestAnimationFrame(updateTradeBalanceBadge);
-      return;
-    }
-    tradeBalanceRenderSignature = nextRenderSignature;
 
-    const imports = badge.querySelector(".openfront-helper-trade-imports");
-    const exports = badge.querySelector(".openfront-helper-trade-exports");
-    const factoryPortSpend = badge.querySelector(
-      ".openfront-helper-trade-factory-port-spend",
-    );
-    const roi = badge.querySelector(".openfront-helper-trade-roi");
-    const breakEven = badge.querySelector(".openfront-helper-trade-break-even");
     const exportWindowMs = Number.isFinite(totals.firstExportAt)
       ? Date.now() - totals.firstExportAt
       : NaN;
-    if (imports) {
-      imports.textContent = formatTradeBalanceAmount(totals.imports);
+
+    if (nextRenderSignature !== tradeBalanceRenderSignature) {
+      tradeBalanceRenderSignature = nextRenderSignature;
+
+      const imports = badge.querySelector(".openfront-helper-trade-imports");
+      const exports = badge.querySelector(".openfront-helper-trade-exports");
+      const factoryPortSpend = badge.querySelector(
+        ".openfront-helper-trade-factory-port-spend",
+      );
+      const roi = badge.querySelector(".openfront-helper-trade-roi");
+      if (imports) {
+        imports.textContent = formatTradeBalanceAmount(totals.imports);
+      }
+      if (exports) {
+        exports.textContent = formatTradeBalanceAmount(totals.exports);
+      }
+      if (factoryPortSpend) {
+        factoryPortSpend.textContent = formatTradeSpendAmount(factoryPortSpendTotal);
+      }
+      if (roi) {
+        roi.textContent = formatTradeRoi(totals.exports, factoryPortSpendTotal);
+        roi.dataset.status = getTradeRoiStatus(totals.exports, factoryPortSpendTotal);
+      }
+
+      const rows = badge.querySelector(".openfront-helper-trade-rows");
+      if (rows) {
+        if (entries.length === 0) {
+          rows.innerHTML = `<span class="openfront-helper-trade-empty">No observed trade yet</span>`;
+        } else {
+          rows.replaceChildren(
+            ...entries.map((entry) => {
+              const row = document.createElement("span");
+              row.className = "openfront-helper-trade-row";
+              const name = document.createElement("span");
+              name.className = "openfront-helper-trade-name";
+              name.textContent = entry.partnerName;
+              const valueWrap = document.createElement("span");
+              valueWrap.className = "openfront-helper-trade-value-wrap";
+              const value = document.createElement("span");
+              value.className = "openfront-helper-trade-value";
+              value.textContent = formatTradeBalanceAmount(entry.total);
+              const direction = document.createElement("span");
+              direction.className = "openfront-helper-trade-direction";
+              direction.textContent = getTradeBalanceDirection(entry);
+              valueWrap.append(value, direction);
+              row.append(name, valueWrap);
+              return row;
+            }),
+          );
+        }
+      }
+      markHelperStatsLayoutDirty();
     }
-    if (exports) {
-      exports.textContent = formatTradeBalanceAmount(totals.exports);
-    }
-    if (factoryPortSpend) {
-      factoryPortSpend.textContent = formatTradeSpendAmount(factoryPortSpendTotal);
-    }
-    if (roi) {
-      roi.textContent = formatTradeRoi(totals.exports, factoryPortSpendTotal);
-      roi.dataset.status = getTradeRoiStatus(totals.exports, factoryPortSpendTotal);
-    }
+
+    // Break-even depends on wall-clock time even when no other data changed;
+    // update only its text node (no full re-render).
+    const breakEven = badge.querySelector(".openfront-helper-trade-break-even");
     if (breakEven) {
-      breakEven.textContent = formatBreakEvenEstimate(
+      const nextBreakEvenText = formatBreakEvenEstimate(
         totals.exports,
         factoryPortSpendTotal,
         exportWindowMs,
       );
-    }
-
-    const rows = badge.querySelector(".openfront-helper-trade-rows");
-    if (rows) {
-      if (entries.length === 0) {
-        rows.innerHTML = `<span class="openfront-helper-trade-empty">No observed trade yet</span>`;
-      } else {
-        rows.replaceChildren(
-          ...entries.map((entry) => {
-            const row = document.createElement("span");
-            row.className = "openfront-helper-trade-row";
-            const name = document.createElement("span");
-            name.className = "openfront-helper-trade-name";
-            name.textContent = entry.partnerName;
-            const valueWrap = document.createElement("span");
-            valueWrap.className = "openfront-helper-trade-value-wrap";
-            const value = document.createElement("span");
-            value.className = "openfront-helper-trade-value";
-            value.textContent = formatTradeBalanceAmount(entry.total);
-            const direction = document.createElement("span");
-            direction.className = "openfront-helper-trade-direction";
-            direction.textContent = getTradeBalanceDirection(entry);
-            valueWrap.append(value, direction);
-            row.append(name, valueWrap);
-            return row;
-          }),
-        );
+      if (breakEven.textContent !== nextBreakEvenText) {
+        breakEven.textContent = nextBreakEvenText;
       }
     }
 
-    positionHelperStatsContainer();
-    badge.dataset.visible = "true";
-    syncHelperStatsContainerVisibility();
-    tradeBalanceAnimationFrame = requestAnimationFrame(updateTradeBalanceBadge);
+    if (badge.dataset.visible !== "true") {
+      badge.dataset.visible = "true";
+      syncHelperStatsContainerVisibility();
+      markHelperStatsLayoutDirty();
+    }
+    syncHelperStatsLayoutIfDirty();
   }
 
   function setTradeBalancesEnabled(enabled) {
     tradeBalancesEnabled = Boolean(enabled);
     if (!tradeBalancesEnabled) {
-      if (tradeBalanceAnimationFrame !== null) {
-        cancelAnimationFrame(tradeBalanceAnimationFrame);
-      }
       tradeBalanceAnimationFrame = null;
       lastProcessedTradeBalanceTick = null;
       lastTradeBalanceRenderAt = 0;
       tradeBalanceRenderSignature = "";
+      unregisterHelperTickListener(updateTradeBalanceBadge);
       if (!exportPartnerHeatmapEnabled && !economyHeatmapEnabled) {
         tradeBalanceTrackers.clear();
         exportPartnerSourceTrackers.clear();
@@ -1146,9 +1148,6 @@
       return;
     }
 
-    if (tradeBalanceAnimationFrame === null) {
-      lastTradeBalanceRenderAt = 0;
-      updateTradeBalanceBadge();
-    }
+    registerHelperTickListener(updateTradeBalanceBadge);
   }
 

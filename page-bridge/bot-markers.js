@@ -43,9 +43,71 @@
     return container;
   }
 
+  // DOM-element cache keyed by player marker id. Eliminates the O(N) per-marker
+  // container.querySelector and the O(N) container.querySelectorAll sweep that
+  // ran every frame. With 40 bots this was ~1600 DOM lookups per frame at 60Hz.
+  const botMarkerEntries = new Map();
+  // Cached active-bot list. Refreshed on a slower cadence than per-frame; the
+  // expensive proxy calls (playerViews, isAlive, isNationBot, nameLocation,
+  // getPlayerMarkerId) only run during a scan.
+  let botMarkerScanCache = [];
+  let lastBotMarkerScanAt = 0;
+  const BOT_MARKER_SCAN_MS = 500;
+
+  function collectBotMarkerScan(game) {
+    const players = getCachedPlayerViews(game);
+    const result = [];
+    for (let index = 0; index < players.length; index += 1) {
+      const player = players[index];
+      if (!isNationBotPlayer(player) || !player?.isAlive?.()) {
+        continue;
+      }
+      const markerId = getPlayerMarkerId(player, index);
+      result.push({ player, markerId });
+    }
+    return result;
+  }
+
+  function pruneBotMarkerCache() {
+    const activeIds = new Set();
+    for (const entry of botMarkerScanCache) {
+      activeIds.add(entry.markerId);
+    }
+    for (const [markerId, entry] of botMarkerEntries) {
+      if (!activeIds.has(markerId)) {
+        entry.marker.remove();
+        botMarkerEntries.delete(markerId);
+      }
+    }
+  }
+
+  function ensureBotMarkerEntry(container, markerId) {
+    let entry = botMarkerEntries.get(markerId);
+    if (entry) {
+      return entry;
+    }
+    const marker = document.createElement("div");
+    marker.className = "openfront-helper-bot-dot";
+    marker.dataset.botId = markerId;
+    container.appendChild(marker);
+    entry = { marker, x: NaN, y: NaN, hidden: false };
+    botMarkerEntries.set(markerId, entry);
+    return entry;
+  }
+
+  function hideBotMarkerEntry(entry) {
+    if (!entry.hidden) {
+      entry.marker.hidden = true;
+      entry.hidden = true;
+    }
+  }
+
   function syncBotMarkers() {
     if (!botMarkersEnabled) {
       document.getElementById(BOT_MARKER_CONTAINER_ID)?.remove();
+      botMarkerEntries.clear();
+      botMarkerScanCache = [];
+      lastBotMarkerScanAt = 0;
       botMarkerAnimationFrame = null;
       return;
     }
@@ -53,22 +115,36 @@
     const context = getOpenFrontGameContext();
     const container = ensureBotMarkerContainer();
     if (!context) {
-      container.replaceChildren();
+      if (botMarkerEntries.size > 0) {
+        for (const entry of botMarkerEntries.values()) {
+          entry.marker.remove();
+        }
+        botMarkerEntries.clear();
+      }
+      botMarkerScanCache = [];
+      lastBotMarkerScanAt = 0;
       botMarkerAnimationFrame = requestAnimationFrame(syncBotMarkers);
       return;
     }
 
-    const activeIds = new Set();
-    const players = Array.from(context.game.playerViews?.() || []);
+    const now = performance.now();
+    if (now - lastBotMarkerScanAt >= BOT_MARKER_SCAN_MS) {
+      botMarkerScanCache = collectBotMarkerScan(context.game);
+      pruneBotMarkerCache();
+      lastBotMarkerScanAt = now;
+    }
 
-    for (let index = 0; index < players.length; index++) {
-      const player = players[index];
-      if (!isNationBotPlayer(player) || !player?.isAlive?.()) {
-        continue;
-      }
+    const innerWidth = window.innerWidth;
+    const innerHeight = window.innerHeight;
 
+    for (let i = 0; i < botMarkerScanCache.length; i += 1) {
+      const { player, markerId } = botMarkerScanCache[i];
       const nameLocation = player.nameLocation?.();
       if (!nameLocation) {
+        const existing = botMarkerEntries.get(markerId);
+        if (existing) {
+          hideBotMarkerEntry(existing);
+        }
         continue;
       }
 
@@ -78,32 +154,28 @@
         !Number.isFinite(screenPos?.y) ||
         screenPos.x < -30 ||
         screenPos.y < -30 ||
-        screenPos.x > window.innerWidth + 30 ||
-        screenPos.y > window.innerHeight + 30
+        screenPos.x > innerWidth + 30 ||
+        screenPos.y > innerHeight + 30
       ) {
+        const existing = botMarkerEntries.get(markerId);
+        if (existing) {
+          hideBotMarkerEntry(existing);
+        }
         continue;
       }
 
-      const markerId = getPlayerMarkerId(player, index);
-      activeIds.add(markerId);
-
-      let marker = container.querySelector(
-        `.openfront-helper-bot-dot[data-bot-id="${escapeCssIdentifier(markerId)}"]`,
-      );
-      if (!marker) {
-        marker = document.createElement("div");
-        marker.className = "openfront-helper-bot-dot";
-        marker.dataset.botId = markerId;
-        container.appendChild(marker);
+      const entry = ensureBotMarkerEntry(container, markerId);
+      if (entry.hidden) {
+        entry.marker.hidden = false;
+        entry.hidden = false;
       }
-
-      marker.style.setProperty("--bot-x", `${screenPos.x}px`);
-      marker.style.setProperty("--bot-y", `${screenPos.y}px`);
-    }
-
-    for (const marker of container.querySelectorAll(".openfront-helper-bot-dot")) {
-      if (!activeIds.has(marker.dataset.botId || "")) {
-        marker.remove();
+      if (entry.x !== screenPos.x) {
+        entry.marker.style.setProperty("--bot-x", `${screenPos.x}px`);
+        entry.x = screenPos.x;
+      }
+      if (entry.y !== screenPos.y) {
+        entry.marker.style.setProperty("--bot-y", `${screenPos.y}px`);
+        entry.y = screenPos.y;
       }
     }
 
@@ -117,6 +189,9 @@
         cancelAnimationFrame(botMarkerAnimationFrame);
       }
       botMarkerAnimationFrame = null;
+      botMarkerEntries.clear();
+      botMarkerScanCache = [];
+      lastBotMarkerScanAt = 0;
       document.getElementById(BOT_MARKER_CONTAINER_ID)?.remove();
       return;
     }
