@@ -1,67 +1,128 @@
 # OpenFront Auto-Join & Helpers
 
-Chrome extension for `https://openfront.io` that automatically joins public lobbies when they match your selected criteria.
+Unofficial browser extension for [OpenFront](https://openfront.io).
 
-Each option now has three states:
-
-- `Include`: the option must be present
-- `Exclude`: the option must not be present
-- empty: the option is ignored
-
-## Criteria
-
-- `FFA`
-- `Duos`
-- `Trios`
-- `Teams larger than Trios`
-- `Random spawn`
-- `Alliances disabled`
-- `2x gold`
-- `0M starting gold`
-- `5M starting gold`
-- `25M starting gold`
-- maps from `assets/map-thumbnails`
-
-The matching logic is split into two groups:
-
-- `FFA`, `Duos`, `Trios`, and `Teams larger than Trios` behave as a lobby-type group
-- if one or more of them are `Include`, any one of them is enough
-- `Exclude` on any of them blocks that lobby type
-- `Duos` matches `Teams of 2`
-- `Trios` matches `Teams of 3`
-- `Teams larger than Trios` matches team lobbies with more than 3 players per team
-
-- `Random spawn`, `Alliances disabled` and `2x gold`
-- `Include`: must be present in the lobby
-- `Exclude`: must not be present in the lobby
-- empty: ignored
-
-- `0M`, `5M` and `25M starting gold`
-- `Include` and `Exclude` can be used on different starting gold values at the same time
-- once at least one `Include` in this group is active, any included value is enough
-- `Exclude` values are always rejected
-- if no starting-gold `Include` is active, only starting-gold `Excludes` are checked
-- `0M` means default starting gold and does not appear as a dedicated badge in OpenFront
-
-- Map buttons are generated from the manifests in `assets/map-thumbnails`.
-- Selecting one or more maps creates a map include group.
-- Once at least one map is selected, any selected map is enough.
-- `Exclude` on a map blocks that map.
-
-The `FFA` option checks the OpenFront `Free For All` game mode.
-As a fallback, the extension also checks for visible `FREE FOR ALL` text inside the lobby data.
+It helps you find public lobbies faster and adds optional in-game helper overlays such as bot markers, nuke and boat prediction, gold-per-minute stats, trade balances, heatmaps, and alliance tools.
 
 ## Installation
 
-1. Open `chrome://extensions` in Chrome
-2. Enable `Developer mode`
-3. Click `Load unpacked`
-4. Select the [chrome-extension](C:\Users\win\WebstormProjects\openfronti\chrome-extension) folder
+1. Download or clone this repository.
+2. Install dependencies:
 
-## Behavior
+```powershell
+npm install
+```
 
-- The extension listens to OpenFront's real public lobby updates.
-- On a match, it triggers the same join flow as a manual public lobby join.
-- Once auto-join fires, it automatically turns itself off.
-- A short alert sound is played when auto-join fires.
-- The same lobby will not be retried for 30 seconds after an attempt.
+3. Build the popup:
+
+```powershell
+npm run build:popup
+```
+
+4. Open Chrome or Edge and go to:
+
+```text
+chrome://extensions
+```
+
+5. Enable `Developer mode`.
+6. Click `Load unpacked`.
+7. Select the repository folder containing `manifest.json`.
+8. Open or reload [OpenFront](https://openfront.io).
+
+If the browser says `dist-popup/index.html` is missing, run `npm run build:popup` again and reload the extension.
+
+## Updating
+
+### Chrome Web Store
+
+Chrome updates installed extensions automatically.
+
+After an update, the popup shows a short `What's new` dialog with the most important changes.
+
+### Manual Installation
+
+1. Pull or download the latest files.
+2. Rebuild the popup:
+
+```powershell
+npm run build:popup
+```
+
+3. Open `chrome://extensions`.
+4. Click the reload button on the extension card.
+5. Reload any open OpenFront tab.
+
+## Development
+
+Install dependencies:
+
+```powershell
+npm install
+```
+
+Build the popup:
+
+```powershell
+npm run build:popup
+```
+
+Watch popup changes during development:
+
+```powershell
+npm run dev:popup
+```
+
+Run popup type checks:
+
+```powershell
+npm run check:popup
+```
+
+Useful syntax checks:
+
+```powershell
+node --check content\core.js
+node --check content\floating-helpers.js
+node --check content\auto-join.js
+node --check page-bridge\runtime.js
+node --check page-bridge\shared-utils.js
+node --check page-bridge\selective-trade-policy.js
+node --check page-bridge\bot-markers.js
+node --check page-bridge\gold-per-minute.js
+node --check page-bridge\trade-balances.js
+node --check page-bridge\nuke-prediction.js
+node --check page-bridge\boat-prediction.js
+node --check page-bridge\heatmaps.js
+node --check page-bridge\bootstrap.js
+```
+
+If you change translations, verify the locale files:
+
+```powershell
+node scripts\verify-i18n.js
+```
+
+## Privacy
+
+This extension is designed for OpenFront helper functionality only.
+
+- No analytics
+- No telemetry
+- No account system
+- No external tracking
+- Settings are stored locally in browser extension storage
+
+See `PRIVACY.md` for more details.
+
+## Permissions
+
+The extension uses:
+
+- `storage` to save settings locally
+- `activeTab` for extension interaction with the current tab
+- host access to `https://openfront.io/*` so helper scripts can run on OpenFront
+
+## Disclaimer
+
+This project is unofficial and is not affiliated with OpenFront or its developers.
