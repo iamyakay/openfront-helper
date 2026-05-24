@@ -13,6 +13,8 @@ export type NormalizedSettings = {
   searchStartedAt: number | null;
   joinNotification: boolean;
   minLobbySize: number | null;
+  minTeamSize: number | null;
+  maxTeamSize: number | null;
   markBotNationsRed: boolean;
   showGoldPerMinute: boolean;
   showTeamGoldPerMinute: boolean;

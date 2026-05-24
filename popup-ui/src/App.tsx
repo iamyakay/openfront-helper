@@ -8,7 +8,6 @@ import {
 import {
   ECONOMIC_HELPERS,
   GAME_HELPERS,
-  LOBBY_TYPE_FILTERS,
   MODIFIER_FILTERS,
   START_GOLD_FILTERS,
 } from "./filterAndHelperConfig";
@@ -25,12 +24,17 @@ import {
 const SOUND_KEY = "joinNotificationSoundData";
 const SOUND_NAME_KEY = "joinNotificationSoundName";
 const LAST_SEEN_VERSION_KEY = "lastSeenVersion";
+const TEAM_SIZE_MIN = 1;
+const TEAM_SIZE_MAX = 100;
 
 function hasSelectedOptions(
   shared: Window["OpenFrontHelperSettings"],
   s: NormalizedSettings,
 ): boolean {
   if (s.minLobbySize != null) {
+    return true;
+  }
+  if (s.minTeamSize != null || s.maxTeamSize != null) {
     return true;
   }
   if (
@@ -148,7 +152,7 @@ export default function App() {
       if (stored[SOUND_KEY]) {
         setSoundDisplayName(
           stored[SOUND_NAME_KEY] ||
-            i18n.getMessage(i18n.DEFAULT_TRANSLATIONS, "customSound"),
+          i18n.getMessage(i18n.DEFAULT_TRANSLATIONS, "customSound"),
         );
         setSoundCustom(true);
       }
@@ -341,6 +345,9 @@ export default function App() {
     shared.getEconomyHeatmapIntensityLabel(settings.economyHeatmapIntensity),
   );
 
+  const teamSizeFilterActive =
+    settings.minTeamSize != null || settings.maxTeamSize != null;
+
   return (
     <main className="panel">
       <header className="hero">
@@ -423,7 +430,7 @@ export default function App() {
                   onClick={async () => {
                     const stored = await chrome.storage.local.get(SOUND_KEY);
                     if (stored[SOUND_KEY]) {
-                      new Audio(stored[SOUND_KEY]).play().catch(() => {});
+                      new Audio(stored[SOUND_KEY]).play().catch(() => { });
                     }
                   }}
                 >
@@ -851,75 +858,74 @@ export default function App() {
                 >
                   {"helpers" in cat
                     ? cat.helpers.map((h) => (
-                        <label
-                          key={h.name}
-                          className={`filter-card toggle-card${
-                            h.name === "showAllianceRequestsPanel"
-                              ? " helper-alliance-request-card"
-                              : ""
+                      <label
+                        key={h.name}
+                        className={`filter-card toggle-card${h.name === "showAllianceRequestsPanel"
+                          ? " helper-alliance-request-card"
+                          : ""
                           }`}
-                        >
-                          <span className="filter-main">
-                            <input
-                              type="checkbox"
-                              name={h.name}
-                              checked={Boolean(settings[h.name])}
-                              onChange={(e) => {
-                                persist((prev) => ({
-                                  ...prev,
-                                  [h.name]: e.target.checked,
-                                }));
-                              }}
-                            />
-                            <span className="filter-dot" />
-                            <span className="filter-copy">
-                              <strong>
-                                {t(h.titleKey)}{" "}
-                                {h.name === "markBotNationsRed" ? (
-                                  <span
-                                    className="helper-option-icon helper-option-icon-bot"
-                                    aria-hidden="true"
-                                  >
-                                    🤖
-                                  </span>
-                                ) : null}
-                                {h.name === "markHoveredAlliesGreen" ||
+                      >
+                        <span className="filter-main">
+                          <input
+                            type="checkbox"
+                            name={h.name}
+                            checked={Boolean(settings[h.name])}
+                            onChange={(e) => {
+                              persist((prev) => ({
+                                ...prev,
+                                [h.name]: e.target.checked,
+                              }));
+                            }}
+                          />
+                          <span className="filter-dot" />
+                          <span className="filter-copy">
+                            <strong>
+                              {t(h.titleKey)}{" "}
+                              {h.name === "markBotNationsRed" ? (
+                                <span
+                                  className="helper-option-icon helper-option-icon-bot"
+                                  aria-hidden="true"
+                                >
+                                  🤖
+                                </span>
+                              ) : null}
+                              {h.name === "markHoveredAlliesGreen" ||
                                 h.name === "showAllianceRequestsPanel" ? (
-                                  <span
-                                    className="helper-option-icon helper-option-icon-alliance"
-                                    aria-hidden="true"
-                                  >
-                                    🤝
-                                  </span>
-                                ) : null}
-                                {h.name === "showNukePrediction" ? (
-                                  <span
-                                    className="helper-option-icon helper-option-icon-nuke"
-                                    aria-hidden="true"
-                                  >
-                                    !
-                                  </span>
-                                ) : null}
-                                {h.name === "showBoatPrediction" ? (
-                                  <span className="helper-option-icon" aria-hidden="true">
-                                    ⚓
-                                  </span>
-                                ) : null}
-                              </strong>
-                              <small>{t(h.descKey)}</small>
-                            </span>
+                                <span
+                                  className="helper-option-icon helper-option-icon-alliance"
+                                  aria-hidden="true"
+                                >
+                                  🤝
+                                </span>
+                              ) : null}
+                              {h.name === "showNukePrediction" ? (
+                                <span
+                                  className="helper-option-icon helper-option-icon-nuke"
+                                  aria-hidden="true"
+                                >
+                                  !
+                                </span>
+                              ) : null}
+                              {h.name === "showBoatPrediction" ? (
+                                <span className="helper-option-icon" aria-hidden="true">
+                                  ⚓
+                                </span>
+                              ) : null}
+                            </strong>
+                            <small>{t(h.descKey)}</small>
                           </span>
-                          <button
-                            className="helper-info-button"
-                            type="button"
-                            data-info-title={t(h.titleKey)}
-                            data-info-image={h.infoImage}
-                            aria-label={h.infoAriaKey ? t(h.infoAriaKey) : t("Helper preview")}
-                          >
-                            i
-                          </button>
-                        </label>
-                      ))
+                        </span>
+                        <button
+                          className="helper-info-button"
+                          type="button"
+                          data-info-title={t(h.titleKey)}
+                          data-info-image={h.infoImage}
+                          aria-label={h.infoAriaKey ? t(h.infoAriaKey) : t("Helper preview")}
+                        >
+                          i
+                        </button>
+                      </label>
+                    ))
                     : null}
 
                   {"economic" in cat && cat.economic ? (
@@ -1270,17 +1276,17 @@ export default function App() {
                 <strong
                   className={
                     Number.isFinite(settings.lobbyForecast.etaMinSeconds) &&
-                    Number.isFinite(settings.lobbyForecast.etaMaxSeconds) &&
-                    (settings.lobbyForecast.etaMinSeconds ?? 0) > 0 &&
-                    (settings.lobbyForecast.etaMaxSeconds ?? 0) > 0
+                      Number.isFinite(settings.lobbyForecast.etaMaxSeconds) &&
+                      (settings.lobbyForecast.etaMinSeconds ?? 0) > 0 &&
+                      (settings.lobbyForecast.etaMaxSeconds ?? 0) > 0
                       ? ""
                       : "forecast-value-loading"
                   }
                 >
                   {Number.isFinite(settings.lobbyForecast.etaMinSeconds) &&
-                  Number.isFinite(settings.lobbyForecast.etaMaxSeconds) &&
-                  (settings.lobbyForecast.etaMinSeconds ?? 0) > 0 &&
-                  (settings.lobbyForecast.etaMaxSeconds ?? 0) > 0
+                    Number.isFinite(settings.lobbyForecast.etaMaxSeconds) &&
+                    (settings.lobbyForecast.etaMinSeconds ?? 0) > 0 &&
+                    (settings.lobbyForecast.etaMaxSeconds ?? 0) > 0
                     ? `${formatDurationShort(settings.lobbyForecast.etaMinSeconds!)} - ${formatDurationShort(settings.lobbyForecast.etaMaxSeconds!)}`
                     : ""}
                 </strong>
@@ -1318,45 +1324,100 @@ export default function App() {
 
           <div className="filters">
             <section className="filter-group">
-              <p className="section-title">{t("Lobby Type")}</p>
-              {LOBBY_TYPE_FILTERS.map((f) => (
-                <label key={f.key} className="filter-card">
-                  <span className="filter-main">
+              <div className="team-size-header">
+                <p className="section-title">{t("Team size")}</p>
+                <button
+                  className="clear-map-button"
+                  type="button"
+                  disabled={!teamSizeFilterActive}
+                  onClick={() => {
+                    persist((prev) => ({
+                      ...prev,
+                      minTeamSize: null,
+                      maxTeamSize: null,
+                    }));
+                  }}
+                >
+                  {t("Clear")}
+                </button>
+              </div>
+              <div className="team-size-card" data-active={String(teamSizeFilterActive)}>
+                <div className="team-size-inputs">
+                  <label className="team-size-input" htmlFor="teamSizeMinInput">
+                    <span className="team-size-input-label">{t("Min")}</span>
                     <input
-                      type="checkbox"
-                      name={f.key}
-                      checked={Boolean(settings.includeFilters[f.key])}
+                      id="teamSizeMinInput"
+                      name="minTeamSize"
+                      type="number"
+                      min={TEAM_SIZE_MIN}
+                      max={TEAM_SIZE_MAX}
+                      step={1}
+                      inputMode="numeric"
+                      placeholder={t("Any")}
+                      value={
+                        settings.minTeamSize == null
+                          ? ""
+                          : String(settings.minTeamSize)
+                      }
                       onChange={(e) => {
-                        const checked = e.target.checked;
+                        const nextMin = shared.normalizeTeamSize(e.target.value);
                         persist((prev) => {
-                          const includeFilters = {
-                            ...prev.includeFilters,
-                            [f.key]: checked,
-                          };
-                          const excludeFilters = { ...prev.excludeFilters };
-                          if (checked) {
-                            excludeFilters[f.key] = false;
+                          let maxTeamSize = prev.maxTeamSize;
+                          if (
+                            nextMin != null &&
+                            maxTeamSize != null &&
+                            nextMin > maxTeamSize
+                          ) {
+                            maxTeamSize = nextMin;
                           }
-                          return { ...prev, includeFilters, excludeFilters };
+                          return {
+                            ...prev,
+                            minTeamSize: nextMin,
+                            maxTeamSize,
+                          };
                         });
                       }}
                     />
-                    <span className="filter-dot" />
-                    <span className="filter-copy">
-                      <strong>{t(f.titleKey)}</strong>
-                      {"descKey" in f && f.descKey ? <small>{t(f.descKey)}</small> : null}
-                    </span>
-                  </span>
-                  <button
-                    className="exclude-button"
-                    type="button"
-                    data-filter={f.key}
-                    data-active={String(Boolean(settings.excludeFilters[f.key]))}
-                  >
-                    {t("Exclude")}
-                  </button>
-                </label>
-              ))}
+                  </label>
+                  <span className="team-size-separator">–</span>
+                  <label className="team-size-input" htmlFor="teamSizeMaxInput">
+                    <span className="team-size-input-label">{t("Max")}</span>
+                    <input
+                      id="teamSizeMaxInput"
+                      name="maxTeamSize"
+                      type="number"
+                      min={TEAM_SIZE_MIN}
+                      max={TEAM_SIZE_MAX}
+                      step={1}
+                      inputMode="numeric"
+                      placeholder={t("Any")}
+                      value={
+                        settings.maxTeamSize == null
+                          ? ""
+                          : String(settings.maxTeamSize)
+                      }
+                      onChange={(e) => {
+                        const nextMax = shared.normalizeTeamSize(e.target.value);
+                        persist((prev) => {
+                          let minTeamSize = prev.minTeamSize;
+                          if (
+                            nextMax != null &&
+                            minTeamSize != null &&
+                            nextMax < minTeamSize
+                          ) {
+                            minTeamSize = nextMax;
+                          }
+                          return {
+                            ...prev,
+                            minTeamSize,
+                            maxTeamSize: nextMax,
+                          };
+                        });
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
             </section>
 
             <section className="filter-group">

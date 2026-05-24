@@ -5,11 +5,6 @@
   const MAP_IDS = MAPS.map((map) => map.id);
 
   const FILTER_KEYS = [
-    "ffaLobby",
-    "duosLobby",
-    "triosLobby",
-    "quadsLobby",
-    "teamsLargerThanTriosLobby",
     "startingGold0M",
     "randomSpawn",
     "alliancesDisabled",
@@ -24,13 +19,9 @@
     "goldMultiplier2x",
   ];
 
-  const LOBBY_TYPE_FILTER_KEYS = [
-    "ffaLobby",
-    "duosLobby",
-    "triosLobby",
-    "quadsLobby",
-    "teamsLargerThanTriosLobby",
-  ];
+  const TEAM_SIZE_MIN = 1;
+  const TEAM_SIZE_MAX = 100;
+
 
   const START_GOLD_FILTER_KEYS = [
     "startingGold0M",
@@ -53,6 +44,8 @@
     searchStartedAt: null,
     joinNotification: false,
     minLobbySize: null,
+    minTeamSize: null,
+    maxTeamSize: null,
     markBotNationsRed: false,
     showGoldPerMinute: false,
     showTeamGoldPerMinute: false,
@@ -154,6 +147,28 @@
     return Number.isFinite(size) && size > 0 ? Math.min(100, Math.floor(size)) : null;
   }
 
+  function normalizeTeamSize(value) {
+    if (value == null || value === "") {
+      return null;
+    }
+    const size = Number(value);
+    if (!Number.isFinite(size) || size <= 0) {
+      return null;
+    }
+    return Math.min(TEAM_SIZE_MAX, Math.max(TEAM_SIZE_MIN, Math.floor(size)));
+  }
+
+  function normalizeTeamSizeRange(minValue, maxValue) {
+    let minTeamSize = normalizeTeamSize(minValue);
+    let maxTeamSize = normalizeTeamSize(maxValue);
+    if (minTeamSize != null && maxTeamSize != null && minTeamSize > maxTeamSize) {
+      const swap = minTeamSize;
+      minTeamSize = maxTeamSize;
+      maxTeamSize = swap;
+    }
+    return { minTeamSize, maxTeamSize };
+  }
+
   function normalizeSearchStartedAt(rawSettings, ensureActiveSearchTimestamp) {
     if (!rawSettings?.enabled) {
       return null;
@@ -246,6 +261,10 @@
     const mapExcludeFilters = source.mapExcludeFilters || source.mapExcludes || {};
     const floatingHelpersPanelPosition = source.floatingHelpersPanelPosition || {};
     const collapsedHelperCategories = source.collapsedHelperCategories || {};
+    const { minTeamSize, maxTeamSize } = normalizeTeamSizeRange(
+      source.minTeamSize,
+      source.maxTeamSize,
+    );
 
     const normalized = {
       ...DEFAULT_SETTINGS,
@@ -255,6 +274,8 @@
         ensureActiveSearchTimestamp,
       ),
       minLobbySize: normalizeMinLobbySize(source.minLobbySize),
+      minTeamSize,
+      maxTeamSize,
       floatingHelpersPanelPosition: normalizeFloatingHelpersPanelPosition(
         floatingHelpersPanelPosition,
       ),
@@ -301,12 +322,12 @@
     MAPS,
     MAP_IDS,
     FILTER_KEYS,
-    LOBBY_TYPE_FILTER_KEYS,
     START_GOLD_FILTER_KEYS,
     DEFAULT_SETTINGS,
     createDefaultMapFilters,
     normalizeSettings,
     normalizeMinLobbySize,
+    normalizeTeamSize,
     normalizeLanguage,
     normalizeMapFilters,
     normalizeEconomyHeatmapIntensity,
