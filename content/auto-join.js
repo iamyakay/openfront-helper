@@ -487,6 +487,36 @@ function getTeamSizePerLobby(lobby) {
   return null;
 }
 
+function getLobbyTeamSizeForFilter(lobby, groupKey) {
+  if (isFfaLobby(lobby, groupKey)) {
+    return 1;
+  }
+
+  const teamSize = getTeamSizePerLobby(lobby);
+  return Number.isFinite(teamSize) ? teamSize : null;
+}
+
+function lobbyMatchesTeamSizeRange(lobby, groupKey) {
+  if (settings.minTeamSize == null && settings.maxTeamSize == null) {
+    return true;
+  }
+
+  const teamSize = getLobbyTeamSizeForFilter(lobby, groupKey);
+  if (!Number.isFinite(teamSize)) {
+    return false;
+  }
+
+  if (settings.minTeamSize != null && teamSize < settings.minTeamSize) {
+    return false;
+  }
+
+  if (settings.maxTeamSize != null && teamSize > settings.maxTeamSize) {
+    return false;
+  }
+
+  return true;
+}
+
 function getLobbyMaxPlayers(lobby) {
   const config = lobby?.gameConfig || {};
   const candidates = [
@@ -520,9 +550,9 @@ function readPeaceTimeModifier(publicModifiers, config) {
 
   const peaceTimeSeconds = Number(
     publicModifiers?.peaceTimeSeconds ??
-      publicModifiers?.peaceTime ??
-      config?.peaceTimeSeconds ??
-      config?.peaceTime,
+    publicModifiers?.peaceTime ??
+    config?.peaceTimeSeconds ??
+    config?.peaceTime,
   );
   if (Number.isFinite(peaceTimeSeconds) && peaceTimeSeconds > 0) {
     return peaceTimeSeconds === 240;
@@ -540,14 +570,8 @@ function extractTrackedFilters(lobby, groupKey) {
   const goldMultiplier = Number(
     publicModifiers.goldMultiplier ?? config.goldMultiplier ?? 0,
   );
-  const teamSize = getTeamSizePerLobby(lobby);
 
   return {
-    ffaLobby: isFfaLobby(lobby, groupKey),
-    duosLobby: teamSize === 2 || objectContainsPhrase(lobby, "teams of 2"),
-    triosLobby: teamSize === 3 || objectContainsPhrase(lobby, "teams of 3"),
-    quadsLobby: teamSize === 4 || objectContainsPhrase(lobby, "teams of 4"),
-    teamsLargerThanTriosLobby: teamSize !== null && teamSize > 4,
     startingGold0M: normalizedStartingGold === 0,
     randomSpawn: readBooleanModifier(
       publicModifiers,
@@ -617,27 +641,14 @@ function lobbyMatchesFilters(lobby, groupKey) {
     return false;
   }
 
+  if (!lobbyMatchesTeamSizeRange(lobby, groupKey)) {
+    return false;
+  }
+
   const modifiers = extractTrackedFilters(lobby, groupKey);
-  const selectedLobbyTypeIncludes = LOBBY_TYPE_FILTER_KEYS.filter(
-    (key) => settings.includeFilters[key],
-  );
-  const selectedLobbyTypeExcludes = LOBBY_TYPE_FILTER_KEYS.filter(
-    (key) => settings.excludeFilters[key],
-  );
-
-  if (selectedLobbyTypeExcludes.some((key) => modifiers[key] === true)) {
-    return false;
-  }
-
-  if (
-    selectedLobbyTypeIncludes.length > 0 &&
-    !selectedLobbyTypeIncludes.some((key) => modifiers[key] === true)
-  ) {
-    return false;
-  }
 
   const nonStartGoldMatches = FILTER_KEYS.every((key) => {
-    if (START_GOLD_FILTER_KEYS.includes(key) || LOBBY_TYPE_FILTER_KEYS.includes(key)) {
+    if (START_GOLD_FILTER_KEYS.includes(key)) {
       return true;
     }
 
@@ -684,6 +695,8 @@ function hasSelectedCriteria() {
       (key) => settings.includeFilters[key] || settings.excludeFilters[key],
     ) ||
     settings.minLobbySize != null ||
+    settings.minTeamSize != null ||
+    settings.maxTeamSize != null ||
     MAP_IDS.some((id) => settings.mapFilters[id] || settings.mapExcludeFilters[id])
   );
 }
@@ -695,6 +708,8 @@ function createForecastFilterSignature() {
     mapFilters: settings.mapFilters,
     mapExcludeFilters: settings.mapExcludeFilters,
     minLobbySize: settings.minLobbySize,
+    minTeamSize: settings.minTeamSize,
+    maxTeamSize: settings.maxTeamSize,
   });
 }
 
@@ -753,11 +768,11 @@ function computeLast100LobbyAverages() {
   const avgLobbyIntervalMs =
     intervalSampleSize > 0
       ? Math.round(
-          lobbyForecastRecentLobbyIntervalsMs.reduce(
-            (sum, value) => sum + value,
-            0,
-          ) / intervalSampleSize,
-        )
+        lobbyForecastRecentLobbyIntervalsMs.reduce(
+          (sum, value) => sum + value,
+          0,
+        ) / intervalSampleSize,
+      )
       : null;
   const avgLobbiesPerMinute =
     Number.isFinite(avgLobbyIntervalMs) && avgLobbyIntervalMs > 0
@@ -769,8 +784,8 @@ function computeLast100LobbyAverages() {
       : null;
   const etaSeconds =
     etaLobbies != null &&
-    Number.isFinite(avgLobbyIntervalMs) &&
-    avgLobbyIntervalMs > 0
+      Number.isFinite(avgLobbyIntervalMs) &&
+      avgLobbyIntervalMs > 0
       ? Math.max(1, Math.round((etaLobbies * avgLobbyIntervalMs) / 1000))
       : null;
 
@@ -876,7 +891,7 @@ function getRandomSpecialModifiers(excluded, countReduction = 0) {
   const excludedSet = new Set(excluded);
   const rolledCount =
     FORECAST_SPECIAL_COUNT_ROLLS[
-      Math.floor(Math.random() * FORECAST_SPECIAL_COUNT_ROLLS.length)
+    Math.floor(Math.random() * FORECAST_SPECIAL_COUNT_ROLLS.length)
     ];
   const wantedCount = Math.max(0, rolledCount - countReduction);
 
@@ -930,11 +945,7 @@ function createForecastScenario(type) {
   if (type === "ffa") {
     return {
       mapId: map.id,
-      ffaLobby: true,
-      duosLobby: false,
-      triosLobby: false,
-      quadsLobby: false,
-      teamsLargerThanTriosLobby: false,
+      teamSize: 1,
       startingGold0M: true,
       randomSpawn: false,
       alliancesDisabled: false,
@@ -955,11 +966,7 @@ function createForecastScenario(type) {
     const teamSize = teamConfigToTeamSize(teamConfig);
     return {
       mapId: map.id,
-      ffaLobby: false,
-      duosLobby: teamSize === 2,
-      triosLobby: teamSize === 3,
-      quadsLobby: teamSize === 4,
-      teamsLargerThanTriosLobby: teamSize != null && teamSize > 4,
+      teamSize,
       startingGold0M: true,
       randomSpawn: false,
       alliancesDisabled: false,
@@ -1004,14 +1011,11 @@ function createForecastScenario(type) {
   );
   const teamSize = teamConfigToTeamSize(teamConfig);
   const startingGold = specialModifiers.startingGold;
+  const scenarioTeamSize = isTeamMode ? teamSize : 1;
 
   return {
     mapId: map.id,
-    ffaLobby: !isTeamMode,
-    duosLobby: isTeamMode && teamSize === 2,
-    triosLobby: isTeamMode && teamSize === 3,
-    quadsLobby: isTeamMode && teamSize === 4,
-    teamsLargerThanTriosLobby: isTeamMode && teamSize != null && teamSize > 4,
+    teamSize: scenarioTeamSize,
     startingGold0M: startingGold === 0,
     randomSpawn: specialModifiers.isRandomSpawn,
     alliancesDisabled: specialModifiers.isAlliancesDisabled,
@@ -1025,6 +1029,27 @@ function createForecastScenario(type) {
     startingGold25M: startingGold === 25_000_000,
     goldMultiplier2x: specialModifiers.goldMultiplier === 2,
   };
+}
+
+function scenarioMatchesTeamSizeRange(scenario) {
+  if (settings.minTeamSize == null && settings.maxTeamSize == null) {
+    return true;
+  }
+
+  const teamSize = scenario?.teamSize;
+  if (!Number.isFinite(teamSize)) {
+    return false;
+  }
+
+  if (settings.minTeamSize != null && teamSize < settings.minTeamSize) {
+    return false;
+  }
+
+  if (settings.maxTeamSize != null && teamSize > settings.maxTeamSize) {
+    return false;
+  }
+
+  return true;
 }
 
 function scenarioMatchesFilters(scenario) {
@@ -1041,24 +1066,12 @@ function scenarioMatchesFilters(scenario) {
     return false;
   }
 
-  const selectedLobbyTypeIncludes = LOBBY_TYPE_FILTER_KEYS.filter(
-    (key) => settings.includeFilters[key],
-  );
-  const selectedLobbyTypeExcludes = LOBBY_TYPE_FILTER_KEYS.filter(
-    (key) => settings.excludeFilters[key],
-  );
-  if (selectedLobbyTypeExcludes.some((key) => scenario[key] === true)) {
-    return false;
-  }
-  if (
-    selectedLobbyTypeIncludes.length > 0 &&
-    !selectedLobbyTypeIncludes.some((key) => scenario[key] === true)
-  ) {
+  if (!scenarioMatchesTeamSizeRange(scenario)) {
     return false;
   }
 
   const nonStartGoldMatches = FILTER_KEYS.every((key) => {
-    if (START_GOLD_FILTER_KEYS.includes(key) || LOBBY_TYPE_FILTER_KEYS.includes(key)) {
+    if (START_GOLD_FILTER_KEYS.includes(key)) {
       return true;
     }
     if (settings.includeFilters[key] && !scenario[key]) {
@@ -1206,9 +1219,9 @@ function buildLobbyForecastPayload() {
   const rollingHitRate = last100Averages.hitRate;
   const rollingSampleSize =
     Number.isFinite(rollingHitRate) &&
-    last100Averages.hitSampleSize >= LOBBY_FORECAST_MIN_MATCH_SAMPLES_FOR_ROLLING
-    ? last100Averages.sampleSize
-    : 0;
+      last100Averages.hitSampleSize >= LOBBY_FORECAST_MIN_MATCH_SAMPLES_FOR_ROLLING
+      ? last100Averages.sampleSize
+      : 0;
   const rollingHits = Number.isFinite(rollingHitRate)
     ? rollingHitRate * rollingSampleSize
     : 0;
@@ -1635,8 +1648,8 @@ async function handleStorageChange(changes, areaName) {
     resetLobbyForecastTracking(
       latestLobbySnapshot
         ? flattenLobbies(latestLobbySnapshot)
-            .map(({ lobby }) => String(lobby?.gameID || ""))
-            .filter(Boolean)
+          .map(({ lobby }) => String(lobby?.gameID || ""))
+          .filter(Boolean)
         : [],
     );
     persistLobbyForecast(true);

@@ -27,6 +27,7 @@ declare global {
         options?: { ensureActiveSearchTimestamp?: boolean },
       ) => NormalizedSettings;
       normalizeMinLobbySize: (value: unknown) => number | null;
+      normalizeTeamSize: (value: unknown) => number | null;
       normalizeLanguage: (value: unknown) => string;
       normalizeEconomyHeatmapIntensity: (value: unknown) => number;
       getEconomyHeatmapIntensityLabel: (value: unknown) => string;
@@ -40,4 +41,4 @@ declare global {
   }
 }
 
-export {};
+export { };

@@ -1,17 +1,5 @@
 /** i18n keys for filter labels (match shared/i18n DEFAULT_TRANSLATIONS / locale JSON). */
 
-export const LOBBY_TYPE_FILTERS = [
-  { key: "ffaLobby", titleKey: "FFA" },
-  { key: "duosLobby", titleKey: "Duos" },
-  { key: "triosLobby", titleKey: "Trios" },
-  { key: "quadsLobby", titleKey: "Quads" },
-  {
-    key: "teamsLargerThanTriosLobby",
-    titleKey: "Teams larger than Quads",
-    descKey: "Matches team lobbies with more than 4 players per team.",
-  },
-] as const;
-
 export const MODIFIER_FILTERS = [
   { key: "randomSpawn", titleKey: "Random spawn" },
   { key: "alliancesDisabled", titleKey: "Alliances disabled" },
@@ -36,11 +24,11 @@ export const START_GOLD_FILTERS = [
 
 export type GameHelperToggle = {
   name:
-    | "markBotNationsRed"
-    | "markHoveredAlliesGreen"
-    | "showAllianceRequestsPanel"
-    | "showNukePrediction"
-    | "showBoatPrediction";
+  | "markBotNationsRed"
+  | "markHoveredAlliesGreen"
+  | "showAllianceRequestsPanel"
+  | "showNukePrediction"
+  | "showBoatPrediction";
   titleKey: string;
   descKey: string;
   infoImage: string;
@@ -90,10 +78,10 @@ export const GAME_HELPERS: GameHelperToggle[] = [
 
 export type EconomicHelperToggle = {
   name:
-    | "showGoldPerMinute"
-    | "showTeamGoldPerMinute"
-    | "showTopGoldPerMinute"
-    | "showTradeBalances";
+  | "showGoldPerMinute"
+  | "showTeamGoldPerMinute"
+  | "showTopGoldPerMinute"
+  | "showTradeBalances";
   titleKey: string;
   descKey: string;
   infoImage?: string;
