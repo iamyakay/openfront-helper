@@ -35,6 +35,23 @@ async function playAudioWithRetries(src) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       await audio.play();
+      // Keep the window alive until playback ends so the alert isn't cut off
+      // mid-sound by window.close(). Guard with a cap in case the metadata
+      // reports a bogus duration.
+      await new Promise((resolve) => {
+        const maxWaitMs = Number.isFinite(audio.duration)
+          ? Math.min(10000, audio.duration * 1000)
+          : 4000;
+        const timeoutId = window.setTimeout(resolve, maxWaitMs);
+        audio.addEventListener(
+          "ended",
+          () => {
+            window.clearTimeout(timeoutId);
+            resolve();
+          },
+          { once: true },
+        );
+      });
       return true;
     } catch (_error) {
       audio.load();
@@ -63,10 +80,15 @@ async function playGameFoundSound() {
   }
 }
 
-playGameFoundSound().catch(() => {});
+// Close once the alert sound has finished (or failed), with a hard cap so a
+// stalled audio element can never keep the popup open indefinitely.
+const closeAfterSound = playGameFoundSound()
+  .catch(() => {})
+  .then(() => delay(1500));
+const closeAfterTimeout = delay(12000);
 
 localizeGameFoundWindow().catch((error) => {
   console.error("Failed to localize game found window:", error);
 });
 
-setTimeout(() => window.close(), 6000);
+Promise.race([closeAfterSound, closeAfterTimeout]).then(() => window.close());

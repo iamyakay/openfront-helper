@@ -363,6 +363,25 @@ function pruneCooldowns() {
   }
 }
 
+let pendingJoinWatchdogId = null;
+
+function teardownOrphanedContentScript() {
+  // The page outlives this content script when the extension reloads or
+  // updates. Without cleanup the watchdog interval and listeners keep firing
+  // and throw "Extension context invalidated" errors until the tab navigates.
+  if (pendingJoinWatchdogId !== null) {
+    window.clearInterval(pendingJoinWatchdogId);
+    pendingJoinWatchdogId = null;
+  }
+  window.removeEventListener("message", handleBridgeMessage);
+  try {
+    chrome.storage.onChanged.removeListener(handleStorageChange);
+    chrome.storage.onChanged.removeListener(handleSoundStorageChange);
+  } catch (_error) {
+    // chrome.* APIs may already be unavailable in an orphaned script.
+  }
+}
+
 function resetPendingJoinIfExpired() {
   if (!pendingJoin) {
     return;
@@ -371,6 +390,14 @@ function resetPendingJoinIfExpired() {
   if (isInActiveGame() || Date.now() - pendingJoin.startedAt > JOIN_ATTEMPT_TIMEOUT_MS) {
     pendingJoin = null;
   }
+}
+
+function pendingJoinWatchdogTick() {
+  if (!isExtensionContextAlive()) {
+    teardownOrphanedContentScript();
+    return;
+  }
+  resetPendingJoinIfExpired();
 }
 
 function isInActiveGame() {
@@ -1657,23 +1684,25 @@ async function handleStorageChange(changes, areaName) {
   tryAutoJoin();
 }
 
+async function handleSoundStorageChange(changes) {
+  if ("joinNotificationSoundData" in changes) {
+    customNotificationSoundData =
+      typeof changes.joinNotificationSoundData.newValue === "string"
+        ? changes.joinNotificationSoundData.newValue
+        : null;
+    hasCustomNotificationSound = Boolean(customNotificationSoundData);
+    if (!hasCustomNotificationSound) {
+      customJoinAlertAudio = null;
+    }
+  }
+}
+
 // Content script bootstrap -------------------------------------------------
 async function init() {
   injectBridge();
   window.addEventListener("message", handleBridgeMessage);
   chrome.storage.onChanged.addListener(handleStorageChange);
-  chrome.storage.onChanged.addListener((changes) => {
-    if ("joinNotificationSoundData" in changes) {
-      customNotificationSoundData =
-        typeof changes.joinNotificationSoundData.newValue === "string"
-          ? changes.joinNotificationSoundData.newValue
-          : null;
-      hasCustomNotificationSound = Boolean(customNotificationSoundData);
-      if (!hasCustomNotificationSound) {
-        customJoinAlertAudio = null;
-      }
-    }
-  });
+  chrome.storage.onChanged.addListener(handleSoundStorageChange);
   await loadSettings();
   lobbyForecastFilterSignature = createForecastFilterSignature();
   resetLobbyForecastTracking();
@@ -1693,7 +1722,10 @@ async function init() {
   ensureJoinAlertAudio();
   ensureCustomJoinAlertAudio();
   tryAutoJoin();
-  window.setInterval(resetPendingJoinIfExpired, 1000);
+  pendingJoinWatchdogId = window.setInterval(pendingJoinWatchdogTick, 1000);
+  window.addEventListener("pagehide", () => {
+    teardownOrphanedContentScript();
+  });
 }
 
 init().catch((error) => {

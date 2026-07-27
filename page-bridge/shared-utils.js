@@ -171,6 +171,7 @@ function getPlayerGoldNumber(player) {
 }
 
 let _cachedInfoOverlayEl = null;
+let _warnedMissingInfoOverlayPanel = false;
 
 function getHoveredPlayerInfoOverlay() {
   if (!_cachedInfoOverlayEl?.isConnected) {
@@ -190,10 +191,21 @@ function getHoveredPlayerInfoOverlay() {
 }
 
 function getPlayerInfoPanelRect(overlay) {
+  // The game styles the hover panel with utility classes that can change on
+  // any game update, so try several selectors and fall back to the overlay's
+  // first visible element child before giving up.
   const panel =
     overlay.querySelector('[class*="bg-gray-800"]') ??
     overlay.querySelector('[class*="backdrop-blur"]') ??
+    overlay.querySelector('[class*="bg-"]') ??
+    overlay.firstElementChild ??
     overlay;
+  if (panel === overlay && overlay.firstElementChild === null && !_warnedMissingInfoOverlayPanel) {
+    _warnedMissingInfoOverlayPanel = true;
+    console.warn(
+      "OpenFront helper: player info overlay panel selector matched nothing; the game UI may have changed and overlay-anchored helpers can be mispositioned.",
+    );
+  }
   const rect = panel.getBoundingClientRect?.();
   if (rect && (rect.width > 0 || rect.height > 0)) {
     return rect;
