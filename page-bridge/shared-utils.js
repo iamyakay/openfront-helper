@@ -191,9 +191,6 @@ function getHoveredPlayerInfoOverlay() {
 }
 
 function getPlayerInfoPanelRect(overlay) {
-  // The game styles the hover panel with utility classes that can change on
-  // any game update, so try several selectors and fall back to the overlay's
-  // first visible element child before giving up.
   const panel =
     overlay.querySelector('[class*="bg-gray-800"]') ??
     overlay.querySelector('[class*="backdrop-blur"]') ??

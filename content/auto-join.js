@@ -366,9 +366,6 @@ function pruneCooldowns() {
 let pendingJoinWatchdogId = null;
 
 function teardownOrphanedContentScript() {
-  // The page outlives this content script when the extension reloads or
-  // updates. Without cleanup the watchdog interval and listeners keep firing
-  // and throw "Extension context invalidated" errors until the tab navigates.
   if (pendingJoinWatchdogId !== null) {
     window.clearInterval(pendingJoinWatchdogId);
     pendingJoinWatchdogId = null;
@@ -378,7 +375,6 @@ function teardownOrphanedContentScript() {
     chrome.storage.onChanged.removeListener(handleStorageChange);
     chrome.storage.onChanged.removeListener(handleSoundStorageChange);
   } catch (_error) {
-    // chrome.* APIs may already be unavailable in an orphaned script.
   }
 }
 

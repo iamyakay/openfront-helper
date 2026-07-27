@@ -1,9 +1,5 @@
 // Final message routing and bridge startup.
 
-  // Individual bridge scripts can fail to load (the injector logs and
-  // continues the chain), so every handler is invoked through this guard.
-  // Otherwise one missing script would make the message listener throw and
-  // silently break every helper handled after it.
   const _missingBridgeHandlers = new Set();
 
   function callBridgeHandler(name, ...args) {
